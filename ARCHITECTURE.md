@@ -93,7 +93,7 @@ If `run_directory` is configured, the completed result is serialized to a tempor
 
 The CLI supports one-shot/stdin/JSON operation and an interactive `:again`/`:paste` session. The REST adapter runs synchronous Harness work in worker threads and exposes both JSON and POST/SSE endpoints. Its bounded event queue provides backpressure; browser disconnects set a cooperative cancellation token. Every SSE payload carries numeric and formatted request elapsed time, while the CLI uses the same formatter. The zero-build Web UI consumes that SSE stream, continuously renders a server-calibrated timer, keeps its execution timeline in a fixed-height scroll container, and inserts all model text with `textContent`, never as executable HTML.
 
-Gateway credentials come exclusively from the ignored `APIKEY` file in the server working directory. The gateway URL is fixed in the configuration layer. REST request bodies cannot override the model, gateway URL or API Key. Optional Bearer authentication protects answer endpoints when `QUANLLM_SERVER_TOKEN` is configured. The default bind address is loopback.
+Gateway credentials come exclusively from the ignored `APIKEY` file in the server working directory. The gateway endpoint is fixed in the configuration layer and constructed at runtime without storing its complete plaintext form in source or release archives. REST request bodies cannot override the model, gateway URL or API Key. Optional Bearer authentication protects answer endpoints when `QUANLLM_SERVER_TOKEN` is configured. The default bind address is loopback.
 
 ## Package boundaries
 

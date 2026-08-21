@@ -17,6 +17,41 @@ FORBIDDEN_PARTS = {
     "runs",
 }
 
+# Keep sensitive deployment details out of source and built archives. This byte sequence is
+# deliberately represented numerically so the validator does not embed the value it rejects.
+FORBIDDEN_CONTENT = (
+    bytes(
+        (
+            104,
+            116,
+            116,
+            112,
+            58,
+            47,
+            47,
+            52,
+            55,
+            46,
+            57,
+            55,
+            46,
+            52,
+            54,
+            46,
+            55,
+            52,
+            58,
+            51,
+            48,
+            48,
+            48,
+            47,
+            118,
+            49,
+        )
+    ),
+)
+
 
 def _members(archive: Path) -> list[str]:
     if archive.name.endswith(".whl"):
@@ -24,6 +59,22 @@ def _members(archive: Path) -> list[str]:
             return handle.namelist()
     with tarfile.open(archive, "r:gz") as handle:
         return handle.getnames()
+
+
+def _file_contents(archive: Path):
+    if archive.name.endswith(".whl"):
+        with zipfile.ZipFile(archive) as handle:
+            for member in handle.infolist():
+                if not member.is_dir():
+                    yield member.filename, handle.read(member)
+        return
+    with tarfile.open(archive, "r:gz") as handle:
+        for member in handle.getmembers():
+            if not member.isfile():
+                continue
+            stream = handle.extractfile(member)
+            if stream is not None:
+                yield member.name, stream.read()
 
 
 def _validate_members(archive: Path, members: list[str]) -> None:
@@ -40,6 +91,12 @@ def _validate_members(archive: Path, members: list[str]) -> None:
             )
 
 
+def _validate_contents(archive: Path) -> None:
+    for member, content in _file_contents(archive):
+        if any(forbidden in content for forbidden in FORBIDDEN_CONTENT):
+            raise ValueError(f"{archive.name} contains forbidden endpoint content: {member}")
+
+
 def validate_release_directory(directory: Path) -> tuple[Path, Path]:
     assets = sorted(path for path in directory.iterdir() if path.is_file())
     wheels = [path for path in assets if path.name.endswith(".whl")]
@@ -49,6 +106,7 @@ def validate_release_directory(directory: Path) -> tuple[Path, Path]:
         raise ValueError(f"expected exactly one wheel and one sdist, found: {names}")
     for archive in assets:
         _validate_members(archive, _members(archive))
+        _validate_contents(archive)
     return wheels[0], sdists[0]
 
 

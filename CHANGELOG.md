@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.1 - 2026-08-22
+
+- Removed the complete managed gateway endpoint from source, documentation, tests and release
+  archives while preserving a fixed, non-overridable runtime destination.
+- Added wheel and sdist content scanning that rejects any regression containing the complete
+  endpoint in plaintext.
+- Refreshed PyPI badge cache keys for the new release.
+
+### Contributor
+
+- [fanfan32123](https://github.com/fanfan32123)
+
 ## 0.1.0 - 2026-08-22
 
 - Added a controlled multi-Agent DAG with parallel isolated solvers.

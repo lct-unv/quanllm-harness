@@ -18,8 +18,11 @@ records. Installed tool plugins execute with the current Python process privileg
 must be reviewed and trusted before installation.
 
 The gateway credential is read from the ignored `APIKEY` file in the process working directory.
-Keep that file private, do not commit it, and restrict its filesystem permissions. The gateway URL
-is fixed by the package and cannot be supplied by REST clients or command-line arguments.
+Keep that file private, do not commit it, and restrict its filesystem permissions. The gateway
+endpoint is fixed by the package, constructed at runtime, and cannot be supplied by REST clients or
+command-line arguments. Its complete plaintext form is excluded from source and release archives.
+This avoids accidental static disclosure; it is not a secrecy boundary because a distributed
+client must resolve its destination while running.
 
 The bundled server binds to `127.0.0.1` by default. Before exposing it to another host, configure
 `QUANLLM_SERVER_TOKEN`, terminate TLS at a trusted reverse proxy, set request/body and connection

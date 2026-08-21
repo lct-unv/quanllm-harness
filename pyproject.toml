@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "quanllm-harness"
-version = "0.1.0"
+version = "0.1.1"
 description = "Agentic verification harness for QuanLLM-v2.0-qm"
 readme = "README.md"
 requires-python = ">=3.10"

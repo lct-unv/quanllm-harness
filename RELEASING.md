@@ -14,15 +14,17 @@ installer packages.
    `node --check src/quanllm_harness/interfaces/web/static/app.js`.
 5. Build with `python -m build --wheel --sdist`, run
    `python scripts/check_release_artifacts.py dist`, then run `python -m twine check dist/*`.
-6. Inspect both archives for credentials, `APIKEY`, run records, caches and unintended artifacts.
+6. Inspect both archives for credentials, `APIKEY`, run records, caches, the complete managed
+   gateway endpoint and unintended artifacts. The artifact validator must reject a plaintext
+   endpoint regression.
 7. Install the wheel into a clean Python environment. Smoke-test `--version`, `--graph`,
    `--capabilities`, the REST health endpoint and the Web UI.
    Do not share pip's locally built pycommute wheel cache across heterogeneous Linux CPUs.
-8. Create a reviewed release commit with these trailers:
+8. Create a reviewed release commit. Add one contiguous trailer per actual co-author, with no
+   blank lines between trailers. For `v0.1.1`, use only:
 
    ```text
    Co-authored-by: fanfan32123 <fanfan13736@gmail.com>
-   Co-authored-by: Hxttt1 <3034557373@qq.com>
    ```
 
 9. Create an annotated `vX.Y.Z` tag from that commit and push the branch and tag. The tag workflow

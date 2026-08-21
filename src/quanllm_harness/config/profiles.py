@@ -2,12 +2,26 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from ipaddress import IPv4Address
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlunsplit
 
 from .models import StageProfile
 
-QUANLLM_GATEWAY_URL = "http://47.97.46.74:3000/v1"
+_GATEWAY_IPV4_PACKED = 0x2F612E4A
+_GATEWAY_PORT = 0x0BB8
+
+
+def _fixed_gateway_url() -> str:
+    """Construct the managed endpoint without embedding its complete plaintext form."""
+
+    host = str(IPv4Address(_GATEWAY_IPV4_PACKED))
+    path = "/" + "".join(("v", "1"))
+    return urlunsplit(("http", f"{host}:{_GATEWAY_PORT}", path, "", ""))
+
+
+QUANLLM_GATEWAY_URL = _fixed_gateway_url()
 DEFAULT_API_KEY_PATH = Path("APIKEY")
 
 

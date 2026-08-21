@@ -1,8 +1,8 @@
 # QuanLLM Harness
 
 [![CI](https://github.com/lct-unv/quanllm-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/lct-unv/quanllm-harness/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/pypi/pyversions/quanllm-harness.svg?v=0.1.0)](https://pypi.org/project/quanllm-harness/)
-[![PyPI](https://img.shields.io/pypi/v/quanllm-harness.svg?v=0.1.0)](https://pypi.org/project/quanllm-harness/)
+[![Python](https://img.shields.io/pypi/pyversions/quanllm-harness.svg?v=0.1.1)](https://pypi.org/project/quanllm-harness/)
+[![PyPI](https://img.shields.io/pypi/v/quanllm-harness.svg?v=0.1.1)](https://pypi.org/project/quanllm-harness/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 `quanllm-harness` 是 `QuanLLM-v2.0-qm` 的独立可靠性工程。它把模型调用、固定职责 Agent、量子工具、逐断言核验、定向修复、运行记录与一个轻量 CLI 从原 QuanLLM CLI 中分离出来。原 CLI 不会被本工程导入或修改。
@@ -30,7 +30,7 @@
 ## 运行要求
 
 - Python 3.10 或更高版本。
-- QuanLLM 网关固定为 `http://47.97.46.74:3000/v1`，用户无需配置地址。
+- QuanLLM 网关由包内固定配置在运行时构造，用户无需配置地址；完整端点不以明文存入源码或发行物。
 - API Key 只从工程根目录的 `APIKEY` 文件读取，不写入源码或运行记录。
 
 ## 安装

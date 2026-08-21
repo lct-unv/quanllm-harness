@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.2 - 2026-08-22
+
+- Reworked the project README into complete, content-equivalent Chinese and English sections for
+  both GitHub and PyPI.
+- Replaced the release-version badge with an exact static version badge so a newly published
+  version cannot temporarily display stale PyPI cache data.
+
+### Contributors
+
+- [Hxttt1](https://github.com/Hxttt1)
+- [fanfan32123](https://github.com/fanfan32123)
+
 ## 0.1.1 - 2026-08-22
 
 - Removed the complete managed gateway endpoint from source, documentation, tests and release

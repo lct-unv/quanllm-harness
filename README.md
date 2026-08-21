@@ -1,8 +1,8 @@
 # QuanLLM Harness
 
 [![CI](https://github.com/lct-unv/quanllm-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/lct-unv/quanllm-harness/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/pypi/pyversions/quanllm-harness.svg?release=0.1.1)](https://pypi.org/project/quanllm-harness/)
-[![PyPI](https://img.shields.io/pypi/v/quanllm-harness.svg?release=0.1.1)](https://pypi.org/project/quanllm-harness/)
+[![Python](https://img.shields.io/pypi/pyversions/quanllm-harness.svg?release=0.1.2)](https://pypi.org/project/quanllm-harness/)
+[![PyPI](https://img.shields.io/badge/PyPI-v0.1.2-3775A9.svg)](https://pypi.org/project/quanllm-harness/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 [中文](#中文) | [English](#english)

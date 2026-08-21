@@ -21,9 +21,10 @@ installer packages.
    `--capabilities`, the REST health endpoint and the Web UI.
    Do not share pip's locally built pycommute wheel cache across heterogeneous Linux CPUs.
 8. Create a reviewed release commit. Add one contiguous trailer per actual co-author, with no
-   blank lines between trailers. For `v0.1.1`, use only:
+   blank lines between trailers. For `v0.1.2`, use:
 
    ```text
+   Co-authored-by: Hxttt1 <3034557373@qq.com>
    Co-authored-by: fanfan32123 <fanfan13736@gmail.com>
    ```
 

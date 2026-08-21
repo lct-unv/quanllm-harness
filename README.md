@@ -5,6 +5,10 @@
 [![PyPI](https://img.shields.io/pypi/v/quanllm-harness.svg?release=0.1.1)](https://pypi.org/project/quanllm-harness/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+[中文](#中文) | [English](#english)
+
+## 中文
+
 `quanllm-harness` 是 `QuanLLM-v2.0-qm` 的独立可靠性工程。它把模型调用、固定职责 Agent、量子工具、逐断言核验、定向修复、运行记录与一个轻量 CLI 从原 QuanLLM CLI 中分离出来。原 CLI 不会被本工程导入或修改。
 
 ```text
@@ -17,7 +21,7 @@
 
 三个入口位于 `src/quanllm_harness/interfaces/`，共享同一个 `HarnessService`，不复制任何审核或工具逻辑。服务端每个请求使用独立 Provider、工具注册表、事件流和证据空间。
 
-## 设计原则
+### 设计原则
 
 - 采用受控 Agent DAG，不使用自由讨论式 Agent 群。
 - 推理请求开启 thinking、禁用 JSON mode；结构化请求关闭 thinking、启用 JSON mode。
@@ -27,13 +31,13 @@
 - 只有模型产生的问题清零才标记为 `verified`；基础设施或协议失败时仍尽量交付，但标记为 `degraded_delivery`。
 - 用户文本始终作为待处理数据传递给内部 Agent，不能覆盖内部协议。
 
-## 运行要求
+### 运行要求
 
 - Python 3.10 或更高版本。
 - QuanLLM 网关由包内固定配置在运行时构造，用户无需配置地址；完整端点不以明文存入源码或发行物。
 - API Key 只从工程根目录的 `APIKEY` 文件读取，不写入源码或运行记录。
 
-## 安装
+### 安装
 
 普通用户直接安装完整版：
 
@@ -80,7 +84,7 @@ quanllm-harness --interactive
 
 支持 `:again` 重跑上一问题、`:paste` 输入多行内容、`:quit` 退出。只有等待用户输入时显示“你：”，Token 统计始终位于一次回答末尾。并行 Solver 的原始思维链按 Agent 分别归组，不会按流式片段交错拼接。CLI 的每个运行过程节点显示从本次请求开始累计的 `XX小时XX分钟XX秒`。
 
-## Web UI 与 REST API
+### Web UI 与 REST API
 
 ```bash
 # 对非本机访问建议设置：export QUANLLM_SERVER_TOKEN='随机长令牌'
@@ -97,7 +101,7 @@ quanllm-server --host 127.0.0.1
 
 若设置了 `QUANLLM_SERVER_TOKEN`，两个回答接口要求 `Authorization: Bearer <token>`；健康、能力、执行图和本地 Web 静态资源保持可读。API 不接收或回传网关 API Key。Web UI 的服务器令牌只保存在当前输入框内，不写入浏览器存储。Web UI 按 Agent 建立独立思维链面板，同时保留各自的完整原始输出。执行过程框采用固定高度并在内部纵向滚动；计时器持续刷新。SSE 的每个事件和终止消息都包含数值型 `elapsed_seconds` 与 `XX小时XX分钟XX秒` 格式的 `elapsed`。
 
-## 快速使用
+### 快速使用
 
 ```python
 from quanllm_harness import HarnessSettings, OpenAIQuanLLMProvider, QuanLLMHarness
@@ -126,7 +130,7 @@ result = harness.answer("问题", cancellation=token)
 
 模型请求本身另有独立的读取和流式总时限，因此取消不依赖无限等待的网络请求结束。
 
-## 受控 Agent 流程
+### 受控 Agent 流程
 
 深题和高风险题默认让两个隔离 Solver 并行作答，再由综合 Agent 生成候选终稿。Solver 与逐断言工具计划产生的每个调用都会先由一次性审查 Agent 核对工具领域和参数忠实性，再进入确定性执行。此后系统执行形式/学科审核、要求/教学审核、逐问题独立裁决，以及有界定向修复和全量复核。
 
@@ -139,7 +143,7 @@ result = harness.answer("问题", cancellation=token)
 - `degraded_delivery`：仍交付答案，但协议、基础设施或收敛不满足“已核验”标准。
 - `failed_without_answer`：求解阶段未能产生可交付答案。
 
-## 默认量子后端
+### 默认量子后端
 
 - SymPy：通用符号数学、矩阵、角动量系数，以及默认可用的结构化算符代数。
 - pycommute：玻色、费米和自旋算符代数。
@@ -154,7 +158,7 @@ Harness 还提供基于 mpmath 的高精度数值积分、局部求根与截断�
 
 第三方发行包可以通过 `quanllm_harness.tools` Python entry-point 返回一个 `Tool` 或 `Tool` 序列。插件在当前 Python 进程中执行，只应安装经过审查的可信插件。
 
-## 工程结构
+### 工程结构
 
 ```text
 src/quanllm_harness/
@@ -173,7 +177,7 @@ src/quanllm_harness/
 
 测试按 `tests/unit`、`tests/integration`、`tests/regression` 和 `tests/fixtures` 分层。接口集成测试覆盖 Web 静态资源、健康检查、Bearer Token、同步回答和 SSE 事件终稿。旧版扁平模块仍保留轻量兼容导入，但新代码应使用上述包路径。
 
-## 开发验收
+### 开发验收
 
 ```bash
 python -m pip install -e '.[dev]'
@@ -187,11 +191,267 @@ python -m twine check dist/*
 
 测试覆盖 Provider 模式互斥、并行 Solver、结构化协议重试、执行图与收敛、工具调用前审查、缓存证据去重、复数矩阵比较、量纲与边界条件、Fock 算符矩、数值后端、默认量子后端、插件发现、运行记录、协议回归 fixtures 和离线 CLI。流式接入见 [examples/streaming_answer.py](examples/streaming_answer.py)，架构细节见 [ARCHITECTURE.md](ARCHITECTURE.md)，发版步骤见 [RELEASING.md](RELEASING.md)。
 
-## 共同贡献者
+### 共同贡献者
 
 - [fanfan32123](https://github.com/fanfan32123)
 - [Hxttt1](https://github.com/Hxttt1)
 
-## 许可证
+### 许可证
 
 本工程使用 [MIT License](LICENSE)。
+
+## English
+
+`quanllm-harness` is an independent reliability system for `QuanLLM-v2.0-qm`. It separates model
+calls, fixed-role Agents, quantum tools, claim-level verification, targeted repair, run records,
+and a lightweight CLI from the original QuanLLM CLI. This project neither imports nor modifies
+the original CLI.
+
+```text
+                     quanllm-harness
+                            ↑
+             ┌──────────────┼──────────────┐
+             │              │              │
+       QuanLLM CLI        Web UI        REST API
+```
+
+The three interfaces live in `src/quanllm_harness/interfaces/` and share one `HarnessService`
+without duplicating review or tool logic. Every server request receives an isolated Provider, tool
+registry, event stream, and evidence space.
+
+### Design principles
+
+- Use a controlled Agent DAG instead of an unconstrained discussion among Agents.
+- Enable thinking and disable JSON mode for reasoning requests; disable thinking and enable JSON
+  mode for structured requests.
+- Route simple questions to one solver and complex questions to two context-isolated solvers.
+- Review domain fit and argument fidelity once before every tool call; successful execution alone
+  does not mean that a claim is supported.
+- Prefer tool evidence over model opinion; extract and verify all claims again after every repair.
+- Return `verified` only after all model-generated issues are cleared. Infrastructure or protocol
+  failures still produce the best available answer under `degraded_delivery`.
+- Treat user text as data passed to internal Agents; it cannot override internal protocols.
+
+### Requirements
+
+- Python 3.10 or later.
+- The managed QuanLLM gateway is fixed by the package and constructed at runtime. Users do not
+  configure it, and its complete endpoint is not stored in plaintext in source or release assets.
+- The API Key is read only from an `APIKEY` file in the working directory and is never written to
+  source or run records.
+
+### Installation
+
+Install the complete package:
+
+```bash
+python -m pip install quanllm-harness
+```
+
+This single command installs the CLI, Web UI, REST API, and every quantum backend. Backend-specific
+installation choices are not provided. Because pycommute contains a C++ extension, platforms
+without a compatible prebuilt wheel need a C++17-capable compiler.
+
+Create an `APIKEY` file in the directory where you intend to run the Harness:
+
+```bash
+nano APIKEY
+```
+
+Put only the Key itself in `APIKEY`, without quotes, a variable name, or `export`, then run:
+
+```bash
+quanllm-harness 'derive the even-parity bound-state equation for a one-dimensional finite well'
+```
+
+Use an editable installation only when developing from source:
+
+```bash
+cd /path/to/quanllm-harness
+python -m pip install -e '.[dev]'
+```
+
+Multiline questions can also be read from standard input:
+
+```bash
+quanllm-harness <<'EOF'
+Derive the first-order ground-state energy correction for a quartic oscillator perturbation,
+check its dimensions, and explain its physical meaning.
+EOF
+```
+
+`--json` emits the complete machine-readable result; `--run-dir DIR` writes run records atomically;
+`--capabilities` lists tools without network access; `--graph` prints the default execution graph;
+and `--total-timeout` sets the cooperative wall-clock budget for the whole run.
+
+Interactive CLI:
+
+```bash
+quanllm-harness --interactive
+```
+
+The session supports `:again` to rerun the previous question, `:paste` for multiline input, and
+`:quit` to exit. “You:” appears only while waiting for input, and Token usage is printed at the end
+of each answer. Raw reasoning from parallel solvers is grouped by Agent instead of interleaving
+stream fragments. Every CLI execution node shows elapsed time from the start of the current request
+in `XX hours XX minutes XX seconds` format.
+
+### Web UI and REST API
+
+```bash
+# Recommended for non-local access: export QUANLLM_SERVER_TOKEN='a-long-random-token'
+quanllm-server --host 127.0.0.1
+```
+
+The default port is `3921`. Open `http://127.0.0.1:3921/` for the Web UI; OpenAPI documentation is
+available at `/docs`. Override the port with `--port` or `QUANLLM_PORT` when needed. Main endpoints:
+
+- `GET /healthz`: service and gateway configuration status.
+- `GET /api/v1/capabilities`: deterministic tool capabilities.
+- `GET /api/v1/graph`: default execution graph.
+- `POST /api/v1/answers`: one-shot JSON answer.
+- `POST /api/v1/answers/stream`: SSE events, raw reasoning, and the final answer over POST.
+
+When `QUANLLM_SERVER_TOKEN` is set, both answer endpoints require
+`Authorization: Bearer <token>`; health, capabilities, the execution graph, and local Web assets
+remain readable. The API never accepts or returns the gateway API Key. The Web UI keeps its server
+token only in the current input field and never writes it to browser storage. It creates a separate
+reasoning panel for each Agent and preserves every Agent's complete raw output. The execution panel
+has a fixed height with internal vertical scrolling, while its timer updates continuously. Every
+SSE event and terminal message includes numeric `elapsed_seconds` and formatted `elapsed` fields.
+
+### Quick start
+
+```python
+from quanllm_harness import HarnessSettings, OpenAIQuanLLMProvider, QuanLLMHarness
+
+settings = HarnessSettings.from_api_key_file()
+provider = OpenAIQuanLLMProvider(settings)
+harness = QuanLLMHarness(provider=provider, settings=settings)
+
+result = harness.answer("derive the even-parity bound-state equation for a finite well")
+print(result.status.value)
+print(result.answer)
+```
+
+Subscribe to typed events with `create_harness(settings, event_sink=...)` to observe streaming
+reasoning, tool evidence, repairs, and usage by Agent. `HarnessResult.to_dict()` is directly
+serializable, and persisted run records exclude credentials.
+
+Callers can cancel long-running work at stage boundaries:
+
+```python
+from quanllm_harness import CancellationToken, create_harness
+
+token = CancellationToken()
+harness = create_harness(settings)
+# token.cancel() may be called from another thread.
+result = harness.answer("question", cancellation=token)
+```
+
+Model requests have independent read and total streaming timeouts, so cancellation does not depend
+on an indefinitely blocked network request returning first.
+
+### Controlled Agent workflow
+
+Deep and high-risk questions use two isolated solvers in parallel before a synthesizer creates the
+candidate answer. Every tool call proposed by a solver or claim-level tool planner first passes a
+one-shot review of tool domain and argument fidelity, then enters deterministic execution. The
+system subsequently performs formal/domain review, requirement/pedagogy review, independent
+adjudication of every issue, bounded targeted repair, and full re-verification.
+
+Review Agents report issues but do not own a “release gate.” The Python orchestrator validates JSON
+Schema conformance, citation locatability, evidence IDs, issue provenance, duplicates, and
+convergence. Every issue receives exactly one independent adjudication even when both reviewers
+report it. An adjudication protocol failure produces a warning and cannot itself trigger a rewrite.
+The Harness returns `verified` only when the protocol is complete and no model-generated issue
+remains.
+
+Result statuses:
+
+- `verified`: complete verification passed.
+- `verified_with_input_ambiguity`: only ambiguity or damage originating in the user's input remains.
+- `degraded_delivery`: an answer is delivered, but protocol, infrastructure, or convergence did
+  not meet the verified standard.
+- `failed_without_answer`: the solving stage produced no deliverable answer.
+
+### Default quantum backends
+
+- SymPy: general symbolic mathematics, matrices, angular-momentum coefficients, and the default
+  structured operator algebra.
+- pycommute: bosonic, fermionic, and spin operator algebra.
+- QuTiP: numerical checks for finite-dimensional quantum states, density matrices, and operators.
+- OpenFermion: normal ordering, conjugation, commutators, and anticommutators of fermionic and
+  bosonic creation/annihilation operators.
+
+A normal installation includes the Web/REST service and every backend above, without per-backend
+extras. `operator_algebra` exactly verifies commutators, anticommutators, products, and Hermitian
+conjugates for a one-dimensional canonical position-momentum pair, angular momentum, a single
+bosonic mode, and a single fermionic mode. It uses structured operator trees instead of natural
+language regular expressions or commutative scalar parsing. Unsupported mixed-family and
+multimode relations are rejected explicitly and delegated to specialized backends; finite matrices
+are never presented as proofs of infinite-dimensional identities.
+
+The Harness also provides high-precision numerical integration, local root finding, and truncation
+convergence checks through mpmath. Numerical results carry precision or limitation notes and are
+never presented as analytic proofs.
+
+If capability status reports a missing default backend, the installation is incomplete and the
+distribution should be reinstalled. SymPy scalar tools reject kets, bras, and abstract
+creation/annihilation operators before execution so that noncommuting quantities cannot be silently
+treated as ordinary variables.
+
+Third-party distributions may expose one `Tool` or a sequence of `Tool` objects through the
+`quanllm_harness.tools` Python entry point. Plugins execute with the privileges of the current
+Python process and should be installed only after review.
+
+### Project structure
+
+```text
+src/quanllm_harness/
+├── interfaces/      # CLI, Web UI, REST API, and isolated service
+├── config/          # model request profiles and immutable runtime settings
+├── contracts/       # request, claim, evidence, event, and result contracts
+├── providers/       # Provider abstraction and QuanLLM-v2 implementation
+├── agents/          # routing, dual solvers, synthesis, review, and repair roles
+├── protocols/       # JSON, claim extraction, and adjudication protocols
+├── orchestration/   # execution graph, cancellation/budget, convergence, and orchestrator
+├── tools/           # registry plus SymPy, numerical, and quantum backends
+├── verification/    # structural, mathematical, semantic, and aggregate verification
+├── events/          # thread-safe event stream
+└── public_api.py
+```
+
+Tests are divided among `tests/unit`, `tests/integration`, `tests/regression`, and `tests/fixtures`.
+Interface integration tests cover Web assets, health checks, Bearer authentication, synchronous
+answers, and SSE terminal events. Lightweight legacy import shims remain available, but new code
+should use the package paths shown above.
+
+### Development verification
+
+```bash
+python -m pip install -e '.[dev]'
+ruff format --check .
+ruff check .
+mypy
+pytest --cov=quanllm_harness
+python -m build
+python -m twine check dist/*
+```
+
+Tests cover Provider mode exclusivity, parallel solvers, structured-protocol retries, execution
+graphs and convergence, pre-tool-call review, cached evidence deduplication, complex matrix
+comparison, dimensions and boundary conditions, Fock-operator moments, numerical backends, default
+quantum backends, plugin discovery, run records, protocol regression fixtures, and the offline CLI.
+See [examples/streaming_answer.py](examples/streaming_answer.py) for streaming integration,
+[ARCHITECTURE.md](ARCHITECTURE.md) for architectural details, and [RELEASING.md](RELEASING.md) for
+the release process.
+
+### Contributors
+
+- [fanfan32123](https://github.com/fanfan32123)
+- [Hxttt1](https://github.com/Hxttt1)
+
+### License
+
+This project is released under the [MIT License](LICENSE).

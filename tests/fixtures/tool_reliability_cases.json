@@ -1,0 +1,27 @@
+[
+  {
+    "id": "pauli_complex_commutator",
+    "question": "计算泡利矩阵 sigma_x 与 sigma_y 的对易子。",
+    "tool": "matrix_calculate",
+    "arguments": {
+      "operation": "commutator",
+      "matrix": [[0, 1], [1, 0]],
+      "other_matrix": [[0, "-I"], ["I", 0]]
+    },
+    "expected_matrix": [["2*I", "0"], ["0", "-2*I"]]
+  },
+  {
+    "id": "oscillator_ground_state_normalization",
+    "question": "核验一维谐振子基态波函数的归一化积分。",
+    "tool": "numeric_integrate",
+    "arguments": {
+      "expression": "pi**(-1/2)*exp(-x**2)",
+      "variable": "x",
+      "lower": "-inf",
+      "upper": "inf",
+      "dps": 40
+    },
+    "expected_value": "1.0",
+    "absolute_tolerance": "1e-35"
+  }
+]

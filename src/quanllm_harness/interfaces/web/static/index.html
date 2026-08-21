@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>QuanLLM Harness</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="masthead">
+        <div>
+          <p class="eyebrow">QUANTUM MECHANICS · VERIFIED ANSWERS</p>
+          <h1>QuanLLM <span>Harness</span></h1>
+        </div>
+        <div class="health" id="health"><i></i><span>正在检查服务</span></div>
+      </header>
+
+      <section class="composer panel">
+        <label for="question">你：</label>
+        <textarea
+          id="question"
+          rows="6"
+          maxlength="100000"
+          placeholder="输入量子力学问题；支持多行公式与上下文……"
+        ></textarea>
+        <div class="composer-footer">
+          <input
+            id="token"
+            type="password"
+            autocomplete="off"
+            placeholder="服务器令牌（若启用，不保存）"
+            aria-label="服务器令牌"
+          />
+          <div class="actions">
+            <button id="stop" class="secondary" type="button" disabled>停止</button>
+            <button id="submit" type="button">开始求解</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="workspace" class="workspace hidden" aria-live="polite">
+        <aside class="panel timeline-wrap">
+          <div class="timeline-heading">
+            <h2>执行过程</h2>
+            <time id="elapsed" datetime="PT0S">00小时00分钟00秒</time>
+          </div>
+          <ol id="timeline" class="timeline"></ol>
+        </aside>
+
+        <div class="output-column">
+          <details class="panel reasoning" open>
+            <summary>原始思维链</summary>
+            <div id="reasoning" class="reasoning-streams"></div>
+          </details>
+
+          <article class="panel answer-panel">
+            <div class="answer-heading">
+              <h2>助手</h2>
+              <span id="run-status" class="status-pill">运行中</span>
+            </div>
+            <pre id="answer" class="answer">等待终稿……</pre>
+            <footer id="usage" class="usage"></footer>
+          </article>
+        </div>
+      </section>
+    </main>
+    <script src="/assets/app.js" defer></script>
+  </body>
+</html>

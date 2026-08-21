@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install build twine
+      - name: Verify tag and package version
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+          tag = os.environ["GITHUB_REF_NAME"]
+          if tag != f"v{version}":
+              raise SystemExit(f"Tag {tag!r} does not match package version {version!r}")
+          if not Path("release-notes", f"{tag}.md").is_file():
+              raise SystemExit(f"Missing release notes for {tag}")
+          PY
+      - run: python -m build --wheel --sdist
+      - run: python scripts/check_release_artifacts.py dist
+      - run: python -m twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-package
+          path: dist/
+
+  github-release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-package
+          path: dist/
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test -f "release-notes/${GITHUB_REF_NAME}.md"
+          gh release create "${GITHUB_REF_NAME}" dist/*.whl dist/*.tar.gz \
+            --verify-tag \
+            --title "QuanLLM Harness ${GITHUB_REF_NAME}" \
+            --notes-file "release-notes/${GITHUB_REF_NAME}.md"
+
+  publish:
+    needs: [build, github-release]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-package
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

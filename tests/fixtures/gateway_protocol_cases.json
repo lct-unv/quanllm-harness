@@ -1,0 +1,20 @@
+[
+  {
+    "id": "fenced-json",
+    "parser": "json",
+    "input": "```json\n{\"ok\": true}\n```",
+    "expected": {"ok": true}
+  },
+  {
+    "id": "surrounded-json",
+    "parser": "json",
+    "input": "prefix {\"value\": 2} suffix",
+    "expected": {"value": 2}
+  },
+  {
+    "id": "concatenated-tool-arguments",
+    "parser": "arguments",
+    "input": "{\"x\": 1}{\"x\": 2}",
+    "expected": [{"x": 1}, {"x": 2}]
+  }
+]

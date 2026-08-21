@@ -17,6 +17,7 @@ installer packages.
 6. Inspect both archives for credentials, `APIKEY`, run records, caches and unintended artifacts.
 7. Install the wheel into a clean Python environment. Smoke-test `--version`, `--graph`,
    `--capabilities`, the REST health endpoint and the Web UI.
+   Do not share pip's locally built pycommute wheel cache across heterogeneous Linux CPUs.
 8. Create a reviewed release commit with these trailers:
 
    ```text

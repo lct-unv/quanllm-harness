@@ -19,7 +19,8 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
+      # pycommute 1.0.0 builds Linux extensions with -march=native. Caching that locally built
+      # wheel across heterogeneous hosted runners can cause an illegal-instruction crash.
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -e '.[dev]'
       - run: ruff check .

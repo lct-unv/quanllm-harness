@@ -16,5 +16,10 @@ New backends must return immutable `Evidence`, define a closed JSON Schema, docu
 and include unit tests. Protocol or prompt changes must add a regression fixture reproducing the
 failure they address. Never add API keys, gateway credentials, run records, or student data.
 
+CI deliberately does not enable the `setup-python` pip cache. pycommute 1.0.0 builds its Linux
+extension with `-march=native`; reusing that locally built wheel on a hosted runner with a different
+CPU can terminate Python with an illegal-instruction error. Do not re-enable cross-run wheel caching
+unless the upstream build becomes architecture-portable.
+
 Keep public imports backward compatible within a minor release. A breaking contract change needs
 a major version and a migration note.

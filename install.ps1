@@ -146,7 +146,9 @@ print("pycommute", version("pycommute"))
 print("quanllm-harness", version("quanllm-harness"))
 print("fermion anticommutator:", result)
 '@
-    Invoke-Python -Arguments @('-c', $verification) -FailureMessage 'Installation verification failed.'
+    $verificationPath = Join-Path $work 'verify_installation.py'
+    [System.IO.File]::WriteAllText($verificationPath, $verification)
+    Invoke-Python -Arguments @($verificationPath) -FailureMessage 'Installation verification failed.'
 
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 

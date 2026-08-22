@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Added a Windows `install.ps1` that downloads the official pycommute 1.0.0 source with pip,
+  verifies its SHA-256 digest, applies the required MSVC compatibility patches in a temporary
+  directory, installs QuanLLM Harness, and verifies fermionic operator algebra.
+- Documented the dedicated Windows installation path in both Chinese and English.
+
 ## 0.1.2 - 2026-08-22
 
 - Reworked the project README into complete, content-equivalent Chinese and English sections for

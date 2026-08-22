@@ -42,3 +42,14 @@ jobs:
       - run: python -m pip install build twine
       - run: python -m build
       - run: python -m twine check dist/*
+
+  windows-install:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Run the supported Windows installer
+        shell: powershell
+        run: .\install.ps1 -PythonLauncher python

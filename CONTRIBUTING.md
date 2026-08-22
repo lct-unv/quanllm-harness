@@ -21,5 +21,11 @@ extension with `-march=native`; reusing that locally built wheel on a hosted run
 CPU can terminate Python with an illegal-instruction error. Do not re-enable cross-run wheel caching
 unless the upstream build becomes architecture-portable.
 
+Windows installation is handled by `install.ps1` until upstream pycommute publishes a compatible
+Windows wheel. Keep its pycommute version, source SHA-256, source transformations, and runtime
+self-check together. Use `--no-binary=pycommute`, never `--no-binary=:all:`, so pip may continue to
+use wheels for build dependencies. Any installer change must be checked on a clean supported
+Windows/Python environment before release.
+
 Keep public imports backward compatible within a minor release. A breaking contract change needs
 a major version and a migration note.

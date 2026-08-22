@@ -39,13 +39,21 @@
 
 ### 安装
 
-普通用户直接安装完整版：
+macOS 与 Linux 用户直接安装完整版：
 
 ```bash
 python -m pip install quanllm-harness
 ```
 
 该命令同时安装 CLI、Web UI、REST API 与全部量子后端，不提供按后端选择的安装方式。由于 pycommute 包含 C++ 扩展，若当前平台没有可用的预编译包，安装时需要支持 C++17 的编译器。
+
+Windows 上的官方 pycommute 1.0.0 源码包目前存在 MSVC 兼容问题。请保留 Visual Studio Build Tools 的“使用 C++ 的桌面开发”组件，并从本仓库根目录运行专用安装器：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+安装器使用 `pip download` 获取并校验官方 pycommute 源码，只在临时目录应用必要的 Windows 兼容补丁，随后构建 pycommute、安装当前 Harness 并执行算符自检。详细说明与故障排查见 [Windows 安装指南](WINDOWS_INSTALL.md)。
 
 安装完成后，在打算运行 Harness 的目录中新建 `APIKEY` 文件：
 
@@ -242,7 +250,7 @@ registry, event stream, and evidence space.
 
 ### Installation
 
-Install the complete package:
+Install the complete package on macOS or Linux:
 
 ```bash
 python -m pip install quanllm-harness
@@ -251,6 +259,19 @@ python -m pip install quanllm-harness
 This single command installs the CLI, Web UI, REST API, and every quantum backend. Backend-specific
 installation choices are not provided. Because pycommute contains a C++ extension, platforms
 without a compatible prebuilt wheel need a C++17-capable compiler.
+
+The official pycommute 1.0.0 source archive currently has MSVC compatibility problems on Windows.
+Keep the **Desktop development with C++** workload from Visual Studio Build Tools installed, then
+run the dedicated installer from the repository root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+The installer uses `pip download` to retrieve and verify the official pycommute source, applies the
+required Windows compatibility patches only inside a temporary directory, builds pycommute,
+installs the selected Harness version, and runs an operator self-check. See the
+[Windows installation guide](WINDOWS_INSTALL.md) for details and troubleshooting.
 
 Create an `APIKEY` file in the directory where you intend to run the Harness:
 

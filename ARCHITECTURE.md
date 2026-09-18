@@ -60,7 +60,29 @@ relations instead of silently assuming tensor-product commutativity. pycommute a
 are the dedicated default backends for wider many-body algebra; matrices and QuTiP only establish
 facts about the supplied finite-dimensional representation.
 
-Installed trusted distributions may add tools through the `quanllm_harness.tools` entry-point group. Discovery occurs when the default registry is built; duplicate names and non-`Tool` objects are rejected.
+## Plugin architecture
+
+The complete plugin contract is part of the main package under `quanllm_harness.plugins`; no
+independent plugin SDK is built or released. Installed distributions advertise a plugin through
+the `quanllm_harness.plugins` entry-point group. The entry-point name is the stable plugin ID and
+must equal `PluginManifest.name`.
+
+Discovery first applies the host enable/disable policy by entry-point name. Disabled or unlisted
+plugins are reported without importing their Python module. Enabled plugins then pass distribution
+digest, API version, harness version, permission, dependency, and manifest validation. Dependencies
+start in topological order and stop in reverse order. A plugin receives only permission-gated
+registrars for Tool, Verifier, Provider, Event, and Service extensions; cross-plugin services also
+require an explicit dependency.
+
+In-process plugins are trusted Python and can return a cleanup callback. Subprocess Tool plugins
+use a one-request UTF-8 JSON protocol without a shell, with a deadline, output limit, and reduced
+environment. This reduces accidental coupling but is not an OS sandbox. Tool evidence records the
+plugin name, version, digest, and execution mode. Plugin verifier results can add issues, warnings,
+and summaries but have no API for granting `verified`; only the core verification engine owns that
+decision. Extension and lifecycle failures are isolated into status or diagnostics where the core
+can safely continue.
+
+The legacy `quanllm_harness.tools` group is policy-controlled and compatibility-only.
 
 ## Trust boundaries
 
@@ -104,6 +126,7 @@ Gateway credentials come exclusively from the ignored `APIKEY` file in the serve
 - `agents` owns one fixed role per module.
 - `orchestration` owns graph state, run control and convergence.
 - `tools` owns deterministic capabilities and evidence creation.
+- `plugins` owns the integrated extension contract, policy, discovery, lifecycle and subprocess protocol.
 - `verification` composes structural, mathematical and semantic checks.
 - `events` owns thread-safe event delivery.
 - `interfaces` owns CLI, Web and REST presentation plus request isolation.

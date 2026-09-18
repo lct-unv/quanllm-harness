@@ -29,3 +29,8 @@ Windows/Python environment before release.
 
 Keep public imports backward compatible within a minor release. A breaking contract change needs
 a major version and a migration note.
+
+The plugin API is maintained inside `src/quanllm_harness/plugins` and must remain part of the main
+`quanllm-harness` distribution. Do not split it into a separately versioned SDK. Public plugin
+contract changes require compatibility tests, a security-boundary review, and matching updates to
+`docs/PLUGIN_DEVELOPMENT.md` and `docs/PLUGIN_SECURITY.md`.

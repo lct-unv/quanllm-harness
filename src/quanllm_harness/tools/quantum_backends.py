@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from importlib.util import find_spec
 from typing import Any
 
+from ._backend_availability import can_import
 from .openfermion_backend import openfermion_algebra, openfermion_tools
 from .pycommute_backend import pycommute_algebra, pycommute_tools
 from .qutip_backend import qutip_state_check, qutip_tools
@@ -14,10 +14,10 @@ from .registry import Tool
 
 def backend_status(_: Mapping[str, Any]) -> Any:
     return {
-        "qutip": find_spec("qutip") is not None,
-        "pycommute": find_spec("pycommute") is not None,
-        "openfermion": find_spec("openfermion") is not None,
-        "note": "三个量子后端均为默认依赖；false 表示当前安装环境不完整。",
+        "qutip": can_import("qutip"),
+        "pycommute": can_import("pycommute"),
+        "openfermion": can_import("openfermion"),
+        "note": "三个量子后端均为默认依赖；false 表示当前安装环境不完整或无法导入。",
     }
 
 
@@ -34,6 +34,7 @@ def quantum_tools() -> tuple[Tool, ...]:
 
 __all__ = [
     "backend_status",
+    "can_import",
     "openfermion_algebra",
     "quantum_tools",
     "pycommute_algebra",

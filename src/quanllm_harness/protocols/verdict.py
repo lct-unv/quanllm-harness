@@ -20,26 +20,33 @@ def parse_verifier_response(
         raise StructuredResponseError("语义核验 issues 不是数组")
     valid_evidence = {item.id for item in evidence}
     issues: list[Issue] = []
-    for index, item in enumerate(raw_issues, 1):
+    skipped = 0
+    for _index, item in enumerate(raw_issues, 1):
         if not isinstance(item, dict):
-            raise StructuredResponseError(f"第 {index} 个问题不是对象")
+            skipped += 1
+            continue
         try:
             origin = IssueOrigin(str(item.get("origin")))
             severity = Severity(str(item.get("severity")))
-        except ValueError as exc:
-            raise StructuredResponseError(f"第 {index} 个问题枚举非法") from exc
+        except ValueError:
+            skipped += 1
+            continue
         if origin not in {IssueOrigin.MODEL, IssueOrigin.INPUT}:
-            raise StructuredResponseError(f"第 {index} 个问题 origin 非法")
+            skipped += 1
+            continue
         quote = str(item.get("quote") or "").strip()
         source = candidate if origin is IssueOrigin.MODEL else question
         if not contains_quote(quote, source):
-            raise StructuredResponseError(f"第 {index} 个问题引文无法定位")
+            skipped += 1
+            continue
         problem = str(item.get("problem") or "").strip()
         if not problem:
-            raise StructuredResponseError(f"第 {index} 个问题缺少依据")
+            skipped += 1
+            continue
         raw_ids = item.get("evidence_ids") or []
         if not isinstance(raw_ids, list) or any(value not in valid_evidence for value in raw_ids):
-            raise StructuredResponseError(f"第 {index} 个问题引用未知证据")
+            skipped += 1
+            continue
         issues.append(
             Issue(
                 origin=origin,
@@ -50,4 +57,9 @@ def parse_verifier_response(
                 evidence_ids=tuple(raw_ids),
             )
         )
+    # A malformed entry among several valid ones must not discard the whole
+    # response; but if every reported issue failed validation, the response is
+    # genuinely unusable and the stage should degrade visibly.
+    if raw_issues and skipped and not issues:
+        raise StructuredResponseError("核验结果中所有问题均未通过引文或证据校验")
     return issues, str(data.get("summary") or "").strip()

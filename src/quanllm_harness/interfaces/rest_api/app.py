@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import os
 from collections.abc import AsyncIterator
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
-from queue import Empty, Full, Queue
 from threading import Thread
 from time import monotonic
 from typing import Any
@@ -22,7 +23,7 @@ from .schemas import AnswerRequest, AnswerResponse, HealthResponse
 
 try:
     from fastapi import Depends, FastAPI, Header, HTTPException, Request
-    from fastapi.responses import FileResponse, StreamingResponse
+    from fastapi.responses import HTMLResponse, StreamingResponse
     from fastapi.staticfiles import StaticFiles
 except ImportError as exc:  # pragma: no cover - exercised by packaging smoke tests
     raise RuntimeError("REST API 默认依赖缺失，请重新安装 quanllm-harness") from exc
@@ -49,16 +50,30 @@ def create_app(
     settings: HarnessSettings | None = None,
     service: HarnessService | None = None,
     server_token: str | None = None,
+    allow_no_auth: bool | None = None,
 ):
     active_service = service or HarnessService(settings or HarnessSettings.from_api_key_file())
     expected_token = (
         server_token if server_token is not None else os.environ.get("QUANLLM_SERVER_TOKEN", "")
     )
+    # Secure by default: answering endpoints are closed unless a token is
+    # configured.  ``allow_no_auth`` is an explicit opt-in (e.g. the
+    # ``--insecure-no-auth`` CLI flag) for internal/local deployments only.
+    if allow_no_auth is None:
+        allow_no_auth = os.environ.get("QUANLLM_ALLOW_NO_AUTH") == "1"
+    if allow_no_auth and not expected_token:
+        LOGGER.warning(
+            "REST API answering endpoints are running WITHOUT authentication "
+            "(--insecure-no-auth). Only use this on a trusted/internal network; "
+            "do not expose the port to the public internet."
+        )
 
     async def authorize(authorization: str | None = Header(default=None)) -> None:
         if not expected_token:
-            return
-        if authorization != f"Bearer {expected_token}":
+            if allow_no_auth:
+                return
+            raise HTTPException(status_code=401, detail="Server token not configured")
+        if not authorization or not hmac.compare_digest(authorization, f"Bearer {expected_token}"):
             raise HTTPException(status_code=401, detail="Unauthorized")
 
     app = FastAPI(
@@ -67,11 +82,12 @@ def create_app(
         description="Verified QuanLLM-v2.0 quantum-mechanics answer service",
     )
     static_root = Path(__file__).parents[1] / "web" / "static"
+    index_html = (static_root / "index.html").read_text(encoding="utf-8")
     app.mount("/assets", StaticFiles(directory=static_root), name="assets")
 
     @app.get("/", include_in_schema=False)
     async def web_ui():
-        return FileResponse(static_root / "index.html")
+        return HTMLResponse(index_html)
 
     @app.get("/healthz", response_model=HealthResponse)
     async def health() -> HealthResponse:
@@ -90,6 +106,15 @@ def create_app(
     @app.get("/api/v1/graph")
     async def graph() -> list[dict[str, object]]:
         return active_service.execution_graph()
+
+    @app.get("/api/v1/plugins")
+    async def plugins() -> dict[str, object]:
+        inspector = getattr(active_service, "plugins", None)
+        return inspector() if callable(inspector) else {"ok": True, "plugins": []}
+
+    close_service = getattr(active_service, "close", None)
+    if callable(close_service):
+        app.router.add_event_handler("shutdown", close_service)
 
     def ensure_configured() -> None:
         if not active_service.settings.api_key:
@@ -126,7 +151,8 @@ def create_app(
         request_id = uuid4().hex
         started_at = monotonic()
         cancellation = CancellationToken()
-        queue: Queue[tuple[str, dict[str, Any]]] = Queue(maxsize=512)
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue(maxsize=512)
 
         def enqueue(event: str, data: dict[str, Any]) -> None:
             elapsed_seconds = monotonic() - started_at
@@ -135,12 +161,14 @@ def create_app(
                 "elapsed_seconds": elapsed_seconds,
                 "elapsed": format_elapsed(elapsed_seconds),
             }
-            while not cancellation.cancelled:
+            pending = asyncio.run_coroutine_threadsafe(queue.put((event, timed_data)), loop)
+            while not cancellation.cancelled and not pending.done():
                 try:
-                    queue.put((event, timed_data), timeout=0.25)
-                    return
-                except Full:
+                    pending.result(timeout=0.25)
+                except FutureTimeoutError:
                     continue
+            if cancellation.cancelled and not pending.done():
+                pending.cancel()
 
         def event_sink(event: HarnessEvent) -> None:
             elapsed_seconds = monotonic() - started_at
@@ -165,12 +193,6 @@ def create_app(
 
         Thread(target=worker, name=f"quanllm-request-{request_id[:8]}", daemon=True).start()
 
-        def poll() -> tuple[str, dict[str, Any]] | None:
-            try:
-                return queue.get(timeout=0.25)
-            except Empty:
-                return None
-
         async def stream() -> AsyncIterator[str]:
             yield _sse(
                 "request",
@@ -183,11 +205,12 @@ def create_app(
             terminal = {"result", "error", "cancelled"}
             last_keepalive = monotonic()
             while True:
-                if await request.is_disconnected():
-                    cancellation.cancel()
-                    return
-                item = await asyncio.to_thread(poll)
-                if item is None:
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=0.25)
+                except TimeoutError:
+                    if await request.is_disconnected():
+                        cancellation.cancel()
+                        return
                     if monotonic() - last_keepalive >= 15:
                         yield ": keepalive\n\n"
                         last_keepalive = monotonic()

@@ -180,7 +180,8 @@ def test_advisory_checkpoint_failure_does_not_stop_other_verifiers():
             elif stage.startswith("工具核验计划"):
                 content = (
                     '{"checks":[{"claim_id":"C-001","tool":"symbolic_calculate",'
-                    '"arguments":{"operation":"simplify","expression":"1"}}],'
+                    '"arguments":{"operation":"simplify","expression":"1"},'
+                    '"purpose":"核验定义"}],'
                     '"not_checkable":[]}'
                 )
             elif stage.startswith("工具调用审查"):
@@ -204,7 +205,7 @@ def test_advisory_checkpoint_failure_does_not_stop_other_verifiers():
     report = VerificationEngine(runtime).verify("解释定义", "定义正确")
     assert report.verifier_summaries == ("教学通过",)
     assert len(report.protocol_warnings) == 2
-    assert "工具核验计划未完成" in report.protocol_warnings[0]
+    assert "工具调用审查未完成" in report.protocol_warnings[0]
     assert "形式与学科核验未完成" in report.protocol_warnings[1]
 
 
@@ -238,7 +239,7 @@ def test_tool_call_reviewer_corrects_lost_imaginary_unit_once():
     runtime = AgentRuntime(
         provider, default_tool_registry(), HarnessSettings(protocol_retry_count=1)
     )
-    evidence, warnings = MathematicalVerifier(runtime).collect(
+    evidence, warnings, _ = MathematicalVerifier(runtime).collect(
         "σy=[[0,-I],[I,0]]",
         "对易子为2*I乘以σz",
         [Claim("C-001", "对易子为2*I乘以σz", "equation")],
@@ -274,7 +275,7 @@ def test_tool_call_review_protocol_failure_is_not_retried_or_executed():
     runtime = AgentRuntime(
         provider, default_tool_registry(), HarnessSettings(protocol_retry_count=1)
     )
-    evidence, warnings = MathematicalVerifier(runtime).collect(
+    evidence, warnings, _ = MathematicalVerifier(runtime).collect(
         "计算一加一", "结果是2", [Claim("C-001", "结果是2", "equation")]
     )
 
@@ -362,7 +363,7 @@ def test_comparison_support_respects_claim_polarity():
             return ModelResponse(content=content, finish_reason="stop")
 
     runtime = AgentRuntime(NegativeClaimProvider(), default_tool_registry(), HarnessSettings())
-    evidence, warnings = MathematicalVerifier(runtime).collect(
+    evidence, warnings, _ = MathematicalVerifier(runtime).collect(
         "判断一和二是否相等", "一和二不相等", [Claim("C-001", "一和二不相等", "conclusion")]
     )
 

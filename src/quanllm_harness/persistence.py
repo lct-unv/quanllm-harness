@@ -40,6 +40,13 @@ def save_run(
             },
             "parallel_solvers": settings.parallel_solvers,
             "semantic_verifier_count": settings.semantic_verifier_count,
+            "plugin_provider": settings.plugin_provider,
+            "plugins": {
+                "enabled": list(settings.plugin_policy.enabled),
+                "disabled": list(settings.plugin_policy.disabled),
+                "allow_unlisted": settings.plugin_policy.allow_unlisted,
+                "require_trusted_digest": settings.plugin_policy.require_trusted_digest,
+            },
         },
         "result": result.to_dict(),
     }

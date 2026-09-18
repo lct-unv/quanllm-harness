@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from importlib.util import find_spec
 from typing import Any
 
+from ._backend_availability import can_import
 from .registry import Tool
 
 
@@ -12,7 +13,11 @@ def qutip_state_check(args: Mapping[str, Any]) -> Any:
         import numpy as np
         import qutip
     except ImportError as exc:
-        raise RuntimeError("QuTiP 默认后端缺失，请重新安装 quanllm-harness") from exc
+        if find_spec("numpy") is None or find_spec("qutip") is None:
+            raise RuntimeError("QuTiP 默认后端未安装，请重新安装 quanllm-harness") from exc
+        raise RuntimeError(
+            "QuTiP（或 numpy）已安装但无法导入，可能底层 DLL 加载失败；请修复安装后重试"
+        ) from exc
     operation = str(args.get("operation", "normalize"))
     state = np.asarray(args.get("state"), dtype=complex)
     ket = qutip.Qobj(state.reshape((-1, 1)))
@@ -30,7 +35,7 @@ def qutip_state_check(args: Mapping[str, Any]) -> Any:
 
 
 def qutip_tools() -> tuple[Tool, ...]:
-    if find_spec("qutip") is None:
+    if not can_import("qutip"):
         return ()
     return (
         Tool(

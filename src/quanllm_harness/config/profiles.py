@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlunsplit
 
+from ..plugins import PluginPolicy, load_plugin_policy
 from .models import StageProfile
 
 _GATEWAY_IPV4_PACKED = 0x2F612E4A
@@ -45,6 +46,8 @@ class HarnessSettings:
     semantic_verifier_count: int = 2
     run_directory: str = ""
     total_timeout_seconds: float = 900.0
+    plugin_policy: PluginPolicy = field(default_factory=PluginPolicy)
+    plugin_provider: str = ""
 
     @classmethod
     def from_api_key_file(
@@ -56,6 +59,8 @@ class HarnessSettings:
             "api_key": api_key,
             "model": os.environ.get("QUANLLM_MODEL", "QuanLLM-v2.0-qm"),
             "run_directory": os.environ.get("QUANLLM_RUN_DIR", ""),
+            "plugin_policy": load_plugin_policy(),
+            "plugin_provider": os.environ.get("QUANLLM_PLUGIN_PROVIDER", ""),
         }
         values.update(overrides)
         return cls(**values)
@@ -90,3 +95,4 @@ class HarnessSettings:
             raise ValueError("semantic_verifier_count 只能是 1 或 2")
         if self.total_timeout_seconds <= 0:
             raise ValueError("total_timeout_seconds 必须为正数")
+        self.plugin_policy.validate()

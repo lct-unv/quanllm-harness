@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from importlib.util import find_spec
 from typing import Any
 
+from ._backend_availability import can_import
 from .registry import Tool
 
 
@@ -11,7 +11,11 @@ def openfermion_algebra(args: Mapping[str, Any]) -> Any:
     try:
         from openfermion import BosonOperator, FermionOperator, hermitian_conjugated, normal_ordered
     except ImportError as exc:
-        raise RuntimeError("OpenFermion 默认后端缺失，请重新安装 quanllm-harness") from exc
+        if not can_import("openfermion"):
+            raise RuntimeError("OpenFermion 默认后端未安装，请重新安装 quanllm-harness") from exc
+        raise RuntimeError(
+            "OpenFermion 已安装但无法导入，可能底层 DLL 加载失败；请修复安装后重试"
+        ) from exc
     cls = FermionOperator if str(args.get("statistics", "fermion")) == "fermion" else BosonOperator
 
     def expression(terms: Any) -> Any:
@@ -47,7 +51,7 @@ def openfermion_algebra(args: Mapping[str, Any]) -> Any:
 
 
 def openfermion_tools() -> tuple[Tool, ...]:
-    if find_spec("openfermion") is None:
+    if not can_import("openfermion"):
         return ()
     term_schema = {
         "type": "object",

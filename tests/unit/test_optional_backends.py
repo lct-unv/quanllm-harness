@@ -1,17 +1,18 @@
 from __future__ import annotations
 
-from importlib.util import find_spec
-
 import pytest
 
 from quanllm_harness.tools.quantum_backends import (
+    can_import,
     openfermion_algebra,
     pycommute_algebra,
     qutip_state_check,
 )
 
 
-@pytest.mark.skipif(find_spec("qutip") is None, reason="QuTiP default dependency is unavailable")
+@pytest.mark.skipif(
+    not can_import("qutip"), reason="QuTiP default dependency is unavailable or cannot be imported"
+)
 def test_qutip_expectation_value():
     result = qutip_state_check(
         {
@@ -24,7 +25,8 @@ def test_qutip_expectation_value():
 
 
 @pytest.mark.skipif(
-    find_spec("pycommute") is None, reason="pycommute default dependency is unavailable"
+    not can_import("pycommute"),
+    reason="pycommute default dependency is unavailable or cannot be imported",
 )
 def test_pycommute_boson_commutator():
     result = pycommute_algebra(
@@ -38,7 +40,8 @@ def test_pycommute_boson_commutator():
 
 
 @pytest.mark.skipif(
-    find_spec("openfermion") is None, reason="OpenFermion default dependency is unavailable"
+    not can_import("openfermion"),
+    reason="OpenFermion default dependency is unavailable or cannot be imported",
 )
 def test_openfermion_fermion_anticommutator():
     result = openfermion_algebra(

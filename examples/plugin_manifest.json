@@ -1,0 +1,10 @@
+{
+  "name": "example_plugin",
+  "version": "1.0.0",
+  "api_version": "1",
+  "requires_harness": ">=0.1.2,<0.2",
+  "description": "Integrated plugin API example",
+  "permissions": ["tools.register", "verifiers.register", "events.subscribe"],
+  "dependencies": [],
+  "execution_mode": "in_process"
+}

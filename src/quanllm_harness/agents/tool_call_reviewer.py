@@ -6,6 +6,7 @@ from typing import Any
 
 from ..contracts import Claim
 from ..protocols import StructuredResponseError
+from ..protocols.claim_extraction import contains_quote
 from . import prompts
 from .runtime import AgentRuntime
 
@@ -61,8 +62,11 @@ class ToolCallReviewerAgent:
             for anchor in source_anchors:
                 if not isinstance(anchor, str) or not anchor.strip():
                     raise StructuredResponseError("工具调用审查来源片段非法")
-                if not any(anchor in source for source in sources):
-                    raise StructuredResponseError("工具调用审查来源片段无法逐字定位")
+                if not any(contains_quote(anchor, source) for source in sources):
+                    raise StructuredResponseError(
+                        "工具调用审查来源片段无法逐字定位（片段前 80 字符）："
+                        + (anchor[:80] if len(anchor) > 80 else anchor)
+                    )
                 anchors.append(anchor)
             self.runtime.tools.validate_call(
                 reviewed_tool, reviewed_arguments, claim_kind=claim.kind

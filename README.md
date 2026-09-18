@@ -1,8 +1,8 @@
 # QuanLLM Harness
 
 [![CI](https://github.com/lct-unv/quanllm-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/lct-unv/quanllm-harness/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/pypi/pyversions/quanllm-harness.svg?release=0.1.2)](https://pypi.org/project/quanllm-harness/)
-[![PyPI](https://img.shields.io/badge/PyPI-v0.1.2-3775A9.svg)](https://pypi.org/project/quanllm-harness/)
+[![Python](https://img.shields.io/pypi/pyversions/quanllm-harness.svg?release=0.1.3)](https://pypi.org/project/quanllm-harness/)
+[![PyPI](https://img.shields.io/badge/PyPI-v0.1.3-3775A9.svg)](https://pypi.org/project/quanllm-harness/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 [中文](#中文) | [English](#english)
@@ -95,8 +95,13 @@ quanllm-harness --interactive
 ### Web UI 与 REST API
 
 ```bash
-# 对非本机访问建议设置：export QUANLLM_SERVER_TOKEN='随机长令牌'
+# 安全默认（失败关闭）：未设置令牌时，两个回答接口返回 401。
+# 生产/非本机访问：export QUANLLM_SERVER_TOKEN='随机长令牌'
+export QUANLLM_SERVER_TOKEN='随机长令牌'
 quanllm-server --host 127.0.0.1
+
+# 仅内部/本机且确认端口未暴露公网时，可显式关闭回答接口认证（启动会打印警告）：
+quanllm-server --host 127.0.0.1 --insecure-no-auth
 ```
 
 默认端口为 `3921`，打开 `http://127.0.0.1:3921/` 使用 Web UI；OpenAPI 文档位于 `/docs`。需要更换端口时仍可显式传入 `--port` 或设置 `QUANLLM_PORT`。主要接口：
@@ -107,7 +112,7 @@ quanllm-server --host 127.0.0.1
 - `POST /api/v1/answers`：一次性 JSON 回答。
 - `POST /api/v1/answers/stream`：POST 请求上的 SSE 事件、原始思维链与终稿。
 
-若设置了 `QUANLLM_SERVER_TOKEN`，两个回答接口要求 `Authorization: Bearer <token>`；健康、能力、执行图和本地 Web 静态资源保持可读。API 不接收或回传网关 API Key。Web UI 的服务器令牌只保存在当前输入框内，不写入浏览器存储。Web UI 按 Agent 建立独立思维链面板，同时保留各自的完整原始输出。执行过程框采用固定高度并在内部纵向滚动；计时器持续刷新。SSE 的每个事件和终止消息都包含数值型 `elapsed_seconds` 与 `XX小时XX分钟XX秒` 格式的 `elapsed`。
+两个回答接口（`/api/v1/answers`、`/api/v1/answers/stream`）**默认失败关闭**：未设置 `QUANLLM_SERVER_TOKEN` 且未加 `--insecure-no-auth` 时返回 `401 Server token not configured`。设置令牌后要求 `Authorization: Bearer <token>`，令牌比对使用常量时间比较（`hmac.compare_digest`）以避免时序侧信道。健康检查、能力、执行图和本地 Web 静态资源**保持可读是预期行为**。API 不接收或回传网关 API Key。Web UI 的服务器令牌只保存在当前输入框内，不写入浏览器存储。Web UI 按 Agent 建立独立思维链面板，同时保留各自的完整原始输出。执行过程框采用固定高度并在内部纵向滚动；计时器持续刷新。SSE 的每个事件和终止消息都包含数值型 `elapsed_seconds` 与 `XX小时XX分钟XX秒` 格式的 `elapsed`。
 
 ### 快速使用
 
@@ -164,7 +169,27 @@ Harness 还提供基于 mpmath 的高精度数值积分、局部求根与截断�
 
 若能力状态显示某个默认后端缺失，说明安装环境不完整，应重新安装发行包。SymPy 标量工具会在执行前拒绝 ket/bra 和抽象产生湮灭算符，避免把非交换量误当普通变量得到“看似成功”的错误证据。
 
-第三方发行包可以通过 `quanllm_harness.tools` Python entry-point 返回一个 `Tool` 或 `Tool` 序列。插件在当前 Python 进程中执行，只应安装经过审查的可信插件。
+### 集成式插件系统
+
+插件 API、管理器、安全策略、CLI 和 REST 状态接口全部位于
+`quanllm-harness` 主包内，不发布独立 SDK。新插件通过
+`quanllm_harness.plugins` Python entry-point 声明，可扩展 Tool、Verifier、Provider、
+Event 订阅与可注入 Service；旧 `quanllm_harness.tools` 入口仅作兼容保留。
+
+插件默认禁用，只有加入启用列表后才会导入：
+
+```bash
+quanllm-harness plugins list
+quanllm-harness plugins enable my_plugin
+quanllm-harness plugins inspect my_plugin
+quanllm-harness plugins doctor
+```
+
+主机会校验 API/主程序版本、声明权限、依赖顺序和可选 SHA-256 信任摘要。
+Tool 证据记录插件名、版本、摘要和执行模式。`subprocess` JSON 协议另外限制
+超时、输出和环境变量，但它不是 OS 级文件系统/网络沙箱。完整规范见
+[插件开发](docs/PLUGIN_DEVELOPMENT.md) 和 [插件安全](docs/PLUGIN_SECURITY.md)，集成示例见
+[examples/plugin_example.py](examples/plugin_example.py)。
 
 ### 工程结构
 
@@ -178,6 +203,7 @@ src/quanllm_harness/
 ├── protocols/       # JSON、断言提取和判卷协议
 ├── orchestration/   # 执行图、取消/预算、收敛与主编排器
 ├── tools/           # 注册表及 SymPy/数值/量子后端
+├── plugins/         # 集成式插件 API、策略、发现、生命周期与子进程协议
 ├── verification/    # 结构、数学、语义与聚合核验
 ├── events/          # 线程安全事件流
 └── public_api.py
@@ -422,9 +448,19 @@ distribution should be reinstalled. SymPy scalar tools reject kets, bras, and ab
 creation/annihilation operators before execution so that noncommuting quantities cannot be silently
 treated as ordinary variables.
 
-Third-party distributions may expose one `Tool` or a sequence of `Tool` objects through the
-`quanllm_harness.tools` Python entry point. Plugins execute with the privileges of the current
-Python process and should be installed only after review.
+### Integrated plugin system
+
+The plugin API, manager, security policy, CLI, and REST status endpoint all ship inside the main
+`quanllm-harness` distribution; there is no separately published SDK. New plugins use the
+`quanllm_harness.plugins` entry-point group and can extend tools, verifiers, providers, events,
+and injectable services. The old `quanllm_harness.tools` group remains compatibility-only.
+
+Plugins are disabled by default and are not imported until explicitly enabled. The host validates
+API/host versions, permissions, dependency order, and optional trusted SHA-256 digests. Evidence
+records plugin provenance. Subprocess tools receive time, output, and environment bounds, but this
+protocol is not an OS sandbox. See [plugin development](docs/PLUGIN_DEVELOPMENT.md),
+[plugin security](docs/PLUGIN_SECURITY.md), and the
+[integrated example](examples/plugin_example.py).
 
 ### Project structure
 
@@ -438,6 +474,7 @@ src/quanllm_harness/
 ├── protocols/       # JSON, claim extraction, and adjudication protocols
 ├── orchestration/   # execution graph, cancellation/budget, convergence, and orchestrator
 ├── tools/           # registry plus SymPy, numerical, and quantum backends
+├── plugins/         # integrated API, policy, discovery, lifecycle, subprocess protocol
 ├── verification/    # structural, mathematical, semantic, and aggregate verification
 ├── events/          # thread-safe event stream
 └── public_api.py

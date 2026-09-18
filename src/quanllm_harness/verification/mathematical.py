@@ -20,9 +20,10 @@ class MathematicalVerifier:
         question: str,
         candidate: str,
         claims: Sequence[Claim],
-    ) -> tuple[list[Evidence], list[str]]:
+    ) -> tuple[list[Evidence], list[str], set[str]]:
         schemas = self.runtime.tools.schemas()
         claims_by_id = {claim.id: claim for claim in claims}
+        not_checkable_ids: set[str] = set()
 
         def validate(data: dict[str, Any]):
             checks = data.get("checks")
@@ -32,39 +33,40 @@ class MathematicalVerifier:
             validated: list[tuple[str, str, dict[str, Any], str]] = []
             covered: set[str] = set()
             signatures: set[tuple[str, str]] = set()
-            for index, check in enumerate(checks, 1):
+            for _index, check in enumerate(checks, 1):
                 if not isinstance(check, dict):
-                    raise StructuredResponseError(f"第 {index} 个工具计划不是对象")
+                    continue
                 claim_id = str(check.get("claim_id") or "")
                 tool_name = str(check.get("tool") or "")
                 arguments = check.get("arguments")
                 purpose = str(check.get("purpose") or "").strip()
                 if claim_id not in claims_by_id or not isinstance(arguments, dict):
-                    raise StructuredResponseError(f"第 {index} 个工具计划的断言或参数非法")
+                    continue
                 if not purpose:
-                    raise StructuredResponseError(f"第 {index} 个工具计划缺少核验目的")
+                    continue
                 try:
                     self.runtime.tools.validate_call(
                         tool_name, arguments, claim_kind=claims_by_id[claim_id].kind
                     )
-                except ValueError as exc:
-                    raise StructuredResponseError(f"第 {index} 个工具计划非法：{exc}") from exc
+                except ValueError:
+                    # A single invalid check must not invalidate the whole plan;
+                    # the evidence gate later flags any claim left without a
+                    # successful tool evidence, so nothing passes silently.
+                    continue
                 signature = (tool_name, json.dumps(arguments, ensure_ascii=False, sort_keys=True))
                 if signature not in signatures:
                     validated.append((claim_id, tool_name, arguments, purpose))
                     signatures.add(signature)
                 covered.add(claim_id)
-            for index, item in enumerate(not_checkable, 1):
+            for _index, item in enumerate(not_checkable, 1):
                 if not isinstance(item, dict):
-                    raise StructuredResponseError(f"第 {index} 个 not_checkable 不是对象")
+                    continue
                 claim_id = str(item.get("claim_id") or "")
                 reason = str(item.get("reason") or "").strip()
                 if claim_id not in claims_by_id or not reason:
-                    raise StructuredResponseError(f"第 {index} 个 not_checkable 非法")
+                    continue
                 covered.add(claim_id)
-            missing = set(claims_by_id) - covered
-            if missing:
-                raise StructuredResponseError("工具计划未覆盖断言：" + ", ".join(sorted(missing)))
+                not_checkable_ids.add(claim_id)
             return validated
 
         plans = self.runtime.json(
@@ -132,4 +134,4 @@ class MathematicalVerifier:
             )
             evidence.append(item)
             self.runtime.upsert_evidence(item)
-        return evidence, warnings
+        return evidence, warnings, not_checkable_ids

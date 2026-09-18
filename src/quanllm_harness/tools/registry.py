@@ -23,6 +23,10 @@ class Tool:
     claim_kinds: Sequence[str] = ()
     argument_validator: ArgumentValidator | None = None
     planner_visible: bool = True
+    plugin_name: str = ""
+    plugin_version: str = ""
+    plugin_digest: str = ""
+    execution_mode: str = "builtin"
 
     def openai_schema(self) -> dict[str, Any]:
         return {
@@ -77,6 +81,10 @@ class ToolRegistry:
                 "claim_kinds": list(tool.claim_kinds),
                 "limitations": list(tool.limitations),
                 "planner_visible": tool.planner_visible,
+                "plugin_name": tool.plugin_name,
+                "plugin_version": tool.plugin_version,
+                "plugin_digest": tool.plugin_digest,
+                "execution_mode": tool.execution_mode,
             }
             for name, tool in self.tools.items()
         }
@@ -187,6 +195,10 @@ class ToolRegistry:
                     ok=True,
                     result=result,
                     limitations=tuple(tool.limitations),
+                    plugin_name=tool.plugin_name,
+                    plugin_version=tool.plugin_version,
+                    plugin_digest=tool.plugin_digest,
+                    execution_mode=tool.execution_mode,
                 )
             except Exception as exc:
                 evidence = Evidence(
@@ -197,6 +209,10 @@ class ToolRegistry:
                     ok=False,
                     error=f"{type(exc).__name__}: {exc}",
                     limitations=tuple(tool.limitations),
+                    plugin_name=tool.plugin_name,
+                    plugin_version=tool.plugin_version,
+                    plugin_digest=tool.plugin_digest,
+                    execution_mode=tool.execution_mode,
                 )
         if event_sink:
             event_sink(

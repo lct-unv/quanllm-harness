@@ -14,8 +14,13 @@ repository owner's private security contact or hosting platform security advisor
 
 Supported releases receive fixes on the latest minor line. The Harness treats model text as
 untrusted data, validates structured responses and tool arguments, and excludes secrets from run
-records. Installed tool plugins execute with the current Python process privileges and therefore
-must be reviewed and trusted before installation.
+records. Plugins are disabled by default and are not imported until explicitly enabled. Enabled
+in-process plugins execute with the current Python process privileges and therefore must be
+reviewed and trusted. A host may require a pre-recorded SHA-256 distribution digest and restrict
+declared permissions. Subprocess Tool mode removes shell interpretation, forwards only a small
+environment, and bounds time and output, but it does not prevent filesystem or network access.
+Run untrusted subprocess plugins in an OS sandbox or container with an unprivileged account and
+explicit filesystem/network policy. See `docs/PLUGIN_SECURITY.md` for the threat model.
 
 The gateway credential is read from the ignored `APIKEY` file in the process working directory.
 Keep that file private, do not commit it, and restrict its filesystem permissions. The gateway

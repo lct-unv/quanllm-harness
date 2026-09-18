@@ -32,9 +32,9 @@ def test_service_builds_a_fresh_harness_for_every_answer(monkeypatch):
         def answer(self, question, *, cancellation=None):
             return _result(f"{self.index}:{question}")
 
-    def fake_create(settings, *, event_sink=None):
+    def fake_create(settings, *, event_sink=None, plugin_manager=None):
         harness = FakeHarness(len(built) + 1)
-        built.append((harness, event_sink))
+        built.append((harness, event_sink, plugin_manager))
         return harness
 
     monkeypatch.setattr("quanllm_harness.interfaces.service.create_harness", fake_create)

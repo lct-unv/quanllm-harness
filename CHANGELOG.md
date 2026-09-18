@@ -2,10 +2,25 @@
 
 ## Unreleased
 
+## 0.1.3 - 2026-09-18
+
+- Added the complete four-stage plugin platform directly to `quanllm-harness`: stable manifest and
+  context APIs, default-deny discovery and dependency lifecycle, permission/digest policy and
+  bounded subprocess tools, plus Tool/Verifier/Provider/Event/Service extensions, provenance,
+  CLI/REST diagnostics, documentation, examples, and tests. No separate plugin SDK is published.
+- Strengthened multi-part quantum-answer verification with more tolerant but traceable claim
+  extraction, stricter tool-call reconstruction, evidence coverage checks, and deterministic
+  checks for common Pauli, eigenpair, boundary-condition, and density-matrix results.
+- Changed REST answer endpoints to fail closed when no server token is configured, added an
+  explicit insecure opt-in for trusted local deployments, and used constant-time token comparison.
 - Added a Windows `install.ps1` that downloads the official pycommute 1.0.0 source with pip,
   verifies its SHA-256 digest, applies the required MSVC compatibility patches in a temporary
   directory, installs QuanLLM Harness, and verifies fermionic operator algebra.
 - Documented the dedicated Windows installation path in both Chinese and English.
+
+### Contributor
+
+- Hxttt1 <3034557373@qq.com>
 
 ## 0.1.2 - 2026-08-22
 

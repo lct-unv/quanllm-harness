@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
-from fastapi.testclient import TestClient
+import httpx
 
 from quanllm_harness.config import HarnessSettings
 from quanllm_harness.contracts import (
@@ -44,35 +45,64 @@ class FakeService:
     def execution_graph():
         return [{"name": "route"}]
 
+    @staticmethod
+    def plugins():
+        return {"ok": True, "plugins": []}
+
+    @staticmethod
+    def close():
+        return None
+
 
 def test_web_health_and_metadata_endpoints():
-    client = TestClient(create_app(service=FakeService()))
-    assert client.get("/").status_code == 200
-    page = client.get("/").text
-    assert "QuanLLM" in page
-    assert 'id="elapsed"' in page
-    assert client.get("/healthz").json()["configured"] is True
-    assert "test_tool" in client.get("/api/v1/capabilities").json()
-    assert client.get("/api/v1/graph").json() == [{"name": "route"}]
+    async def scenario():
+        transport = httpx.ASGITransport(app=create_app(service=FakeService()))
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/")
+            assert response.status_code == 200
+            assert "QuanLLM" in response.text
+            assert 'id="elapsed"' in response.text
+            assert (await client.get("/healthz")).json()["configured"] is True
+            assert "test_tool" in (await client.get("/api/v1/capabilities")).json()
+            assert (await client.get("/api/v1/graph")).json() == [{"name": "route"}]
+            assert (await client.get("/api/v1/plugins")).json() == {
+                "ok": True,
+                "plugins": [],
+            }
+
+    asyncio.run(scenario())
 
 
 def test_sync_answer_requires_configured_bearer_token():
-    client = TestClient(create_app(service=FakeService(), server_token="secret"))
-    assert client.post("/api/v1/answers", json={"question": "Q"}).status_code == 401
-    response = client.post(
-        "/api/v1/answers",
-        json={"question": "Q"},
-        headers={"Authorization": "Bearer secret"},
-    )
-    assert response.status_code == 200
-    assert response.json()["result"]["answer"] == "测试答案"
+    async def scenario():
+        app = create_app(service=FakeService(), server_token="secret")
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post("/api/v1/answers", json={"question": "Q"})
+            assert response.status_code == 401
+            response = await client.post(
+                "/api/v1/answers",
+                json={"question": "Q"},
+                headers={"Authorization": "Bearer secret"},
+            )
+            assert response.status_code == 200
+            assert response.json()["result"]["answer"] == "测试答案"
+
+    asyncio.run(scenario())
 
 
 def test_streaming_answer_emits_events_and_terminal_result():
-    client = TestClient(create_app(service=FakeService()))
-    with client.stream("POST", "/api/v1/answers/stream", json={"question": "Q"}) as response:
-        assert response.status_code == 200
-        body = "".join(response.iter_text())
+    async def scenario():
+        app = create_app(service=FakeService(), allow_no_auth=True)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post("/api/v1/answers/stream", json={"question": "Q"})
+            assert response.status_code == 200
+            return response.text
+
+    body = asyncio.run(scenario())
     blocks = [block for block in body.split("\n\n") if block and not block.startswith(":")]
     event_names = [
         next(line[6:].strip() for line in block.splitlines() if line.startswith("event:"))

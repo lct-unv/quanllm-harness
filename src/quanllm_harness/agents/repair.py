@@ -19,6 +19,8 @@ class RepairAgent:
         question: str,
         candidate: str,
         issues: Sequence[Mapping[str, Any]],
+        *,
+        hint: str = "",
     ) -> Candidate:
         user = (
             "【原始用户问题】\n"
@@ -34,6 +36,8 @@ class RepairAgent:
                 default=list,
             )
         )
+        if hint:
+            user = user + "\n\n【标准推导参考】\n" + hint
         return self.runtime.reason(
             prompts.REPAIR_PROMPT, user, stage="定向修复", require_tool=False
         )

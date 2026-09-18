@@ -3,12 +3,15 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
-from typing import Any, TypeVar, overload
+from typing import TYPE_CHECKING, Any, TypeVar, overload
 
 from ..config import HarnessSettings
 from ..contracts import Candidate, Claim, EventSink, Evidence, ModelResponse, Usage
 from ..provider import QuanLLMProvider
 from ..tools import ToolRegistry
+
+if TYPE_CHECKING:
+    from ..plugins import PluginManager
 
 T = TypeVar("T")
 
@@ -36,6 +39,7 @@ class AgentRuntime:
     tools: ToolRegistry
     settings: HarnessSettings
     event_sink: EventSink | None = None
+    plugin_manager: PluginManager | None = None
     usage: Usage = field(default_factory=Usage)
     evidence: list[Evidence] = field(default_factory=list)
 

@@ -21,6 +21,10 @@ class Evidence:
     input_verified: bool = False
     supports_claim: bool | None = None
     review: str = ""
+    plugin_name: str = ""
+    plugin_version: str = ""
+    plugin_digest: str = ""
+    execution_mode: str = "builtin"
 
 
 @dataclass(frozen=True)

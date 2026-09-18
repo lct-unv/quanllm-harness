@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping, Sequence
 from time import monotonic
 from typing import Any
@@ -9,6 +10,33 @@ from ..config import HarnessSettings
 from ..contracts import EventSink, HarnessEvent, ModelResponse, ToolCall, Usage
 from ..protocols.json_request import StructuredResponseError, decode_argument_objects
 from .base import ProviderError, QuanLLMProvider
+
+_REASONING_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.S)
+
+
+def _extract_reasoning_tool_calls(text: str) -> list[ToolCall]:
+    """Fallback for models that emit ``<tool_call>{...}</tool_call>`` inside the
+    reasoning stream instead of the structured ``tool_calls`` API field."""
+    calls: list[ToolCall] = []
+    for index, match in enumerate(_REASONING_CALL_RE.finditer(text or "")):
+        try:
+            data = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            continue
+        name = str(data.get("name") or "")
+        arguments_raw = data.get("arguments")
+        if not name or arguments_raw is None:
+            continue
+        if isinstance(arguments_raw, dict):
+            argument_objects = [arguments_raw]
+        else:
+            try:
+                argument_objects = decode_argument_objects(str(arguments_raw))
+            except (json.JSONDecodeError, StructuredResponseError):
+                continue
+        for arguments in argument_objects:
+            calls.append(ToolCall(f"reasoning-{index}", name, arguments))
+    return calls
 
 
 class OpenAIQuanLLMProvider(QuanLLMProvider):
@@ -109,6 +137,8 @@ class OpenAIQuanLLMProvider(QuanLLMProvider):
             raise ProviderError(f"{stage} 请求失败：{exc}") from exc
 
         calls: list[ToolCall] = []
+        if not tool_slots:
+            calls.extend(_extract_reasoning_tool_calls("".join(reasoning_parts)))
         for slot in tool_slots.values():
             try:
                 argument_objects = decode_argument_objects(slot["arguments"])

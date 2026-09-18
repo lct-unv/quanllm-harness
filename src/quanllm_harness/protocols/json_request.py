@@ -15,16 +15,24 @@ def parse_json_object(text: str) -> dict[str, Any]:
         if lines and lines[-1].strip() == "```":
             lines.pop()
         candidate = "\n".join(lines).strip()
-    start, end = candidate.find("{"), candidate.rfind("}")
-    if start < 0 or end < start:
-        raise StructuredResponseError("响应中没有完整 JSON 对象")
-    try:
-        value = json.loads(candidate[start : end + 1])
-    except json.JSONDecodeError as exc:
-        raise StructuredResponseError(f"JSON 解析失败：{exc.msg}") from exc
-    if not isinstance(value, dict):
-        raise StructuredResponseError("结构化响应必须是 JSON 对象")
-    return value
+    # Locate the first *valid* JSON object with ``raw_decode`` instead of
+    # slicing between the first "{" and the last "}". Slicing breaks when a
+    # string value contains braces (e.g. "{a, b, c}") or when the model appends
+    # explanatory text after the object. Try each "{" until one decodes.
+    decoder = json.JSONDecoder()
+    position = 0
+    while True:
+        position = candidate.find("{", position)
+        if position < 0:
+            raise StructuredResponseError("响应中没有完整 JSON 对象")
+        try:
+            value, _ = decoder.raw_decode(candidate, position)
+        except json.JSONDecodeError:
+            position += 1
+            continue
+        if isinstance(value, dict):
+            return value
+        position += 1
 
 
 def decode_argument_objects(text: str) -> list[dict[str, Any]]:

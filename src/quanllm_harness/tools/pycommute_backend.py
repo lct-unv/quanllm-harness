@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from importlib.util import find_spec
 from typing import Any
 
+from ._backend_availability import can_import
 from .registry import Tool
 
 
@@ -11,7 +11,11 @@ def pycommute_algebra(args: Mapping[str, Any]) -> Any:
     try:
         from pycommute.expression import S_m, S_p, S_x, S_y, S_z, a, a_dag, c, c_dag, conj, n
     except ImportError as exc:
-        raise RuntimeError("pycommute 默认后端缺失，请重新安装 quanllm-harness") from exc
+        if not can_import("pycommute"):
+            raise RuntimeError("pycommute 默认后端未安装，请重新安装 quanllm-harness") from exc
+        raise RuntimeError(
+            "pycommute 已安装但无法导入，可能底层 DLL 加载失败；请修复安装后重试"
+        ) from exc
     factories = {
         "fermion_create": c_dag,
         "fermion_annihilate": c,
@@ -58,7 +62,7 @@ def pycommute_algebra(args: Mapping[str, Any]) -> Any:
 
 
 def pycommute_tools() -> tuple[Tool, ...]:
-    if find_spec("pycommute") is None:
+    if not can_import("pycommute"):
         return ()
     operator_schema = {
         "type": "object",

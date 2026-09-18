@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -7,7 +8,9 @@ from .registry import Tool
 
 
 def _validate_scalar_arguments(args: Mapping[str, Any]) -> None:
-    operator_marks = ("|", "⟩", "⟨", "bra", "ket", "dagger", "†")
+    # "|" alone may denote absolute value (e.g. |E|), so only bra/ket markers
+    # are rejected; bare absolute-value bars are allowed.
+    operator_marks = ("⟩", "⟨", "bra", "ket", "dagger", "†")
     for key in ("expression", "lhs", "rhs", "equation"):
         value = args.get(key)
         if isinstance(value, str) and any(mark in value for mark in operator_marks):
@@ -22,22 +25,209 @@ def _sympy():
     return sp
 
 
+def _convert_braced(text: str, cmd: str, replacement: str) -> str:
+    """Convert ``\\cmd{...}`` (with balanced braces) to ``replacement(...)``."""
+    marker = "\\" + cmd + "{"
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        if text.startswith(marker, i):
+            j = i + len(marker)
+            depth = 1
+            k = j
+            while k < n and depth:
+                if text[k] == "{":
+                    depth += 1
+                elif text[k] == "}":
+                    depth -= 1
+                k += 1
+            out.append(replacement + "(" + text[j : k - 1] + ")")
+            i = k
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out)
+
+
+def _convert_frac(text: str) -> str:
+    """Convert ``\\frac{numerator}{denominator}`` to ``(numerator)/(denominator)``,
+    handling nested braces (e.g. ``\\frac{\\sqrt{2mE}}{\\hbar}``)."""
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        if text.startswith("\\frac{", i):
+            j = i + 6
+            depth = 1
+            k = j
+            while k < n and depth:
+                if text[k] == "{":
+                    depth += 1
+                elif text[k] == "}":
+                    depth -= 1
+                k += 1
+            numerator = text[j : k - 1]
+            if k < n and text[k] == "{":
+                depth = 1
+                k2 = k + 1
+                while k2 < n and depth:
+                    if text[k2] == "{":
+                        depth += 1
+                    elif text[k2] == "}":
+                        depth -= 1
+                    k2 += 1
+                denominator = text[k + 1 : k2 - 1]
+                out.append("(" + numerator + ")/(" + denominator + ")")
+                i = k2
+            else:
+                out.append("\\frac{")
+                i += 6
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out)
+
+
+_LATEX_SIMPLE = (
+    (r"\left", ""),
+    (r"\right", ""),
+    (r"\,", ""),
+    (r"\;", ""),
+    (r"\!", ""),
+    (r"\sqrt{", "sqrt("),
+    (r"\cos", "*cos"),
+    (r"\sin", "*sin"),
+    (r"\tan", "*tan"),
+    (r"\tanh", "*tanh"),
+    (r"\exp", "*exp"),
+    (r"\ln", "*ln"),
+    (r"\log", "*log"),
+    (r"\kappa", "kappa"),
+    (r"\alpha", "alpha"),
+    (r"\beta", "beta"),
+    (r"\gamma", "gamma"),
+    (r"\lambda", "lambda"),
+    (r"\mu", "mu"),
+    (r"\pi", "pi"),
+    (r"\hbar", "hbar"),
+    (r"\omega", "omega"),
+    (r"\cdot", "*"),
+    (r"\times", "*"),
+    (r"\pm", "+-"),
+    (r"\infty", "oo"),
+)
+
+
+def _latex_to_sympy(text: str) -> str:
+    """Translate common LaTeX fragments to SymPy syntax so model-provided
+    expressions such as ``A\\cos(ka)`` or ``\\frac{\\kappa}{k}`` still parse."""
+    text = _convert_frac(text)
+    text = _convert_braced(text, "sqrt", "sqrt")
+    for old, new in _LATEX_SIMPLE:
+        text = text.replace(old, new)
+    # Drop a multiplication sign that now begins the string or follows an operator.
+    text = re.sub(r"(^|[\(\+\-=,])[\*]+(?=[0-9A-Za-z_\(])", r"\1", text)
+    # Absolute-value bars |x| -> Abs(x).
+    text = re.sub(r"\|([^|]+)\|", r"Abs(\1)", text)
+    return text
+
+
+_SYMBOL_SANITIZE_RE = __import__("re").compile(r"[^0-9A-Za-z_\u0370-\u03ff]")
+
+
+def _clean_symbol(name: str) -> str:
+    """Sanitize common physics symbol spellings (LaTeX escapes, primes, subscripts).
+
+    ``k'`` -> ``kprime``, ``\\alpha`` -> ``alpha``, ``V₀`` -> ``V0``; Greek letters
+    and plain ASCII names pass through unchanged. The cleaned name is used both in
+    the parsed expression text and in the locals mapping so SymPy can accept the
+    symbols physics answers routinely use.
+    """
+    cleaned = name.strip().lstrip("\\")
+    cleaned = cleaned.replace("'", "prime").replace("’", "prime").replace("′", "prime")
+    cleaned = _SYMBOL_SANITIZE_RE.sub("", cleaned)
+    return cleaned
+
+
 def _locals(sp, symbols: list[str] | None = None) -> dict[str, Any]:
     values = {"i": sp.I, "I": sp.I, "pi": sp.pi, "E": sp.E, "oo": sp.oo}
     for name in symbols or ():
-        if not name.isidentifier() or name.startswith("_"):
+        cleaned = _clean_symbol(name)
+        if not cleaned or cleaned.startswith("_"):
             raise ValueError(f"非法符号名：{name}")
-        values[name] = sp.Symbol(name)
+        values[cleaned] = sp.Symbol(cleaned)
     return values
 
 
 def _parse(expression: Any, sp, symbols: list[str] | None = None):
+    # Unwrap scalars the model sometimes passes wrapped in JSON objects/arrays
+    # (e.g. point={"x": "a"} or expression=["A*cos(k*x)"]).
+    if isinstance(expression, dict):
+        values = [value for value in expression.values() if value is not None]
+        expression = values[0] if values else ""
+    elif isinstance(expression, (list, tuple)):
+        expression = expression[0] if expression else ""
     if not isinstance(expression, (str, int, float)):
         raise ValueError("表达式必须是字符串或数值")
     text = str(expression)
     if len(text) > 10_000 or "__" in text:
         raise ValueError("表达式过长或包含禁止标识符")
-    return sp.sympify(text.replace("^", "**"), locals=_locals(sp, symbols))
+    if "=" in text:
+        raise ValueError(
+            "表达式不能包含等号；若需解方程请使用 solve_equation，若需比较两边请使用 compare_expressions"
+        )
+    if "[" in text or "]" in text:
+        raise ValueError(
+            "表达式不能包含方括号（列表/向量）；向量/矩阵计算请使用矩阵工具（matrix_calculate / compare_matrices）"
+        )
+    for name in symbols or ():
+        cleaned = _clean_symbol(name)
+        if cleaned and cleaned != name:
+            text = text.replace(name, cleaned)
+    text = _latex_to_sympy(text)
+    text = text.replace("^", "**")
+    from sympy.parsing.sympy_parser import (  # noqa: PLC0415
+        convert_xor,
+        implicit_multiplication_application,
+        parse_expr,
+        standard_transformations,
+    )
+
+    transformations = standard_transformations + (
+        implicit_multiplication_application,
+        convert_xor,
+    )
+
+    def _parse_checked(source: str) -> Any:
+        result = parse_expr(
+            source, local_dict=_locals(sp, symbols), transformations=transformations
+        )
+        # The scalar backend must never receive a Python list/tuple/Matrix: a
+        # "[...]" string parses to a plain list, and later algebra raises a
+        # confusing TypeError. Reject with actionable guidance instead.
+        if isinstance(result, (list, tuple)):
+            raise ValueError("表达式不能是列表或元组；向量/矩阵计算请使用矩阵工具")
+        if hasattr(result, "shape"):
+            raise ValueError("表达式不能是矩阵/向量；向量/矩阵计算请使用矩阵工具")
+        return result
+
+    try:
+        return _parse_checked(text)
+    except ValueError:
+        raise
+    except Exception:
+        # Last-resort retry: strip stray quotes/backticks/control characters that
+        # the model sometimes injects, then parse once more.
+        cleaned = re.sub(r"[\"'`\u2018\u2019\u201c\u201d\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
+        try:
+            return _parse_checked(cleaned)
+        except ValueError:
+            raise
+        except Exception as exc2:
+            # Surface one clear, actionable message instead of SymPy's nested
+            # "Sympify of expression '...' failed because ..." wrapping.
+            raise ValueError(f"无法将输入解析为 SymPy 表达式：{text!r}") from exc2
 
 
 def symbolic_calculate(args: Mapping[str, Any]) -> Any:
@@ -46,7 +236,7 @@ def symbolic_calculate(args: Mapping[str, Any]) -> Any:
     symbols = list(args.get("symbols") or [])
     expression = _parse(args.get("expression", ""), sp, symbols)
     variable = str(args.get("variable", "x"))
-    variable_symbol = _locals(sp, symbols + [variable])[variable]
+    variable_symbol = _locals(sp, symbols + [variable])[_clean_symbol(variable)]
     if operation == "simplify":
         result = sp.simplify(expression)
     elif operation == "expand":
@@ -96,11 +286,52 @@ def compare_expressions(args: Mapping[str, Any]) -> Any:
     return {"equivalent": difference == 0, "simplified_difference": str(difference)}
 
 
+def derive_boundary_equation(args: Mapping[str, Any]) -> Any:
+    """Symbolically derive the matching equation for two piecewise wavefunction
+    branches via log-derivative matching at the boundary point.
+
+    Amplitudes cancel when matching ``ψ_L'/ψ_L = ψ_R'/ψ_R`` at ``x = point``,
+    so the returned ``matching_difference`` is the objective condition that must
+    vanish. For a finite-well even-parity Ansatz ``ψ_L=A cos(kx)`` and
+    ``ψ_R=B exp(-κx)`` at ``x=a`` this yields ``-k*tan(a*k) + κ``, i.e.
+    ``k*tan(ka) = κ``.
+    """
+    sp = _sympy()
+    symbols = list(args.get("symbols") or [])
+    variable = str(args.get("variable", "x"))
+    left = _parse(args.get("left_expression"), sp, symbols)
+    right = _parse(args.get("right_expression"), sp, symbols)
+    point = _parse(args.get("point"), sp, symbols)
+    x = _locals(sp, symbols + [variable])[_clean_symbol(variable)]
+
+    def evaluate(expr):
+        return sp.simplify(expr.subs({x: point}))
+
+    left_value = evaluate(left)
+    right_value = evaluate(right)
+    left_derivative = evaluate(sp.diff(left, x))
+    right_derivative = evaluate(sp.diff(right, x))
+    if left_value == 0 or right_value == 0:
+        raise ValueError("边界处波函数为零，无法用 log-derivative 匹配（请改用直接连续性方程）")
+    lhs_log = sp.simplify(left_derivative / left_value)
+    rhs_log = sp.simplify(right_derivative / right_value)
+    difference = sp.simplify(lhs_log - rhs_log)
+    return {
+        "left_value": str(left_value),
+        "right_value": str(right_value),
+        "left_log_derivative": str(lhs_log),
+        "right_log_derivative": str(rhs_log),
+        "matching_difference": str(difference),
+        "derived_matching_equation": str(sp.Eq(difference, 0)),
+        "matched": difference == 0,
+    }
+
+
 def solve_equation(args: Mapping[str, Any]) -> Any:
     sp = _sympy()
     variable = str(args.get("variable", "x"))
     symbols = list(dict.fromkeys([*(args.get("symbols") or []), variable]))
-    x = _locals(sp, symbols)[variable]
+    x = _locals(sp, symbols)[_clean_symbol(variable)]
     equation = str(args.get("equation", ""))
     if "=" in equation:
         lhs, rhs = equation.split("=", 1)
@@ -143,6 +374,40 @@ def compare_matrices(args: Mapping[str, Any]) -> Any:
         "equivalent": difference == sp.zeros(*lhs.shape),
         "difference": _matrix_entries(difference),
         "normalized_inputs": normalized,
+    }
+
+
+def matrix_eigenpair_check(args: Mapping[str, Any]) -> Any:
+    """Deterministically verify a claimed eigenpair: M·v = λ·v and ⟨v|v⟩=1.
+
+    Catches wrong or non-normalized eigenvectors (e.g. Pauli spin-projection
+    eigenstates) that the LLM may produce but that matrix_calculate alone does
+    not validate.
+    """
+    sp = _sympy()
+    matrix = _parse_matrix(args.get("matrix"), sp)
+    eigenvalue = _parse(args.get("eigenvalue"), sp, list(args.get("symbols") or []))
+    vector_raw = args.get("eigenvector")
+    if not isinstance(vector_raw, list) or not vector_raw:
+        raise ValueError("eigenvector 必须是非空数组")
+    vector = sp.Matrix([_parse(item, sp, list(args.get("symbols") or [])) for item in vector_raw])
+    if matrix.cols != vector.rows:
+        raise ValueError("矩阵列数与向量行数不一致")
+    residual_entries = [sp.simplify(value) for value in (matrix * vector - eigenvalue * vector)]
+    is_eigenvector = all(value == 0 for value in residual_entries)
+    norm_raw = sum(sp.conjugate(value) * value for value in vector)
+    # Physics symbols are real: drop conjugate() so cos²+sin² simplifies to 1.
+    real_sub = {sp.conjugate(symbol): symbol for symbol in vector.free_symbols}
+    norm_sq = sp.trigsimp(sp.simplify(norm_raw.subs(real_sub)))
+    normalized = sp.simplify(norm_sq - 1) == 0
+    return {
+        "matrix": _matrix_entries(matrix),
+        "eigenvalue": str(eigenvalue),
+        "eigenvector": [str(value) for value in vector],
+        "residual": [str(value) for value in residual_entries],
+        "eigenpair_valid": bool(is_eigenvector),
+        "norm_squared": str(norm_sq),
+        "normalized": bool(normalized),
     }
 
 
@@ -283,7 +548,7 @@ def boundary_match(args: Mapping[str, Any]) -> Any:
     sp = _sympy()
     variable = str(args.get("variable", "x"))
     symbols = list(dict.fromkeys([*(args.get("symbols") or []), variable]))
-    x = _locals(sp, symbols)[variable]
+    x = _locals(sp, symbols)[_clean_symbol(variable)]
     point = _parse(args.get("point"), sp, symbols)
     left = _parse(args.get("left_expression"), sp, symbols)
     right = _parse(args.get("right_expression"), sp, symbols)
@@ -346,7 +611,9 @@ def sympy_tools() -> tuple[Tool, ...]:
     return (
         Tool(
             "symbolic_calculate",
-            "通用标量符号化简、展开、因式分解、微积分、极限或代入检查；不得传入矩阵或二维数组。",
+            "通用标量符号化简、展开、因式分解、微积分、极限或代入检查；仅接受标量表达式（不含等号、"
+            "方括号/列表/向量、矩阵），向量/矩阵请用 matrix_calculate 或 compare_matrices，"
+            "方程（含 =）请用 solve_equation，比较两边请用 compare_expressions。",
             {
                 **object_schema,
                 "properties": {
@@ -371,7 +638,7 @@ def sympy_tools() -> tuple[Tool, ...]:
                 "required": ["operation", "expression"],
             },
             symbolic_calculate,
-            claim_kinds=("equation", "derivation", "condition", "conclusion"),
+            claim_kinds=("definition", "equation", "derivation", "condition", "conclusion"),
             argument_validator=_validate_scalar_arguments,
         ),
         Tool(
@@ -387,7 +654,7 @@ def sympy_tools() -> tuple[Tool, ...]:
                 "required": ["lhs", "rhs"],
             },
             compare_expressions,
-            claim_kinds=("equation", "derivation", "condition", "conclusion"),
+            claim_kinds=("definition", "equation", "derivation", "condition", "conclusion"),
             argument_validator=_validate_scalar_arguments,
         ),
         Tool(
@@ -399,7 +666,7 @@ def sympy_tools() -> tuple[Tool, ...]:
                 "required": ["lhs", "rhs"],
             },
             compare_matrices,
-            claim_kinds=("equation", "derivation", "condition", "conclusion"),
+            claim_kinds=("definition", "equation", "derivation", "condition", "conclusion"),
         ),
         Tool(
             "solve_equation",
@@ -414,7 +681,26 @@ def sympy_tools() -> tuple[Tool, ...]:
                 "required": ["equation"],
             },
             solve_equation,
-            claim_kinds=("equation", "derivation", "condition", "conclusion"),
+            claim_kinds=("definition", "equation", "derivation", "condition", "conclusion"),
+            argument_validator=_validate_scalar_arguments,
+        ),
+        Tool(
+            "derive_boundary_equation",
+            "从两段分段波函数在边界点做 log-derivative 匹配，符号化推导匹配方程（自动消去振幅系数）；"
+            "用于核验由边界条件得出的超越方程，例如有限深势阱的 tan(ka) 方程。",
+            {
+                **object_schema,
+                "properties": {
+                    "left_expression": {"type": "string"},
+                    "right_expression": {"type": "string"},
+                    "variable": {"type": "string"},
+                    "point": {},
+                    "symbols": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["left_expression", "right_expression", "point"],
+            },
+            derive_boundary_equation,
+            claim_kinds=("definition", "equation", "derivation", "condition", "conclusion"),
             argument_validator=_validate_scalar_arguments,
         ),
         Tool(
@@ -446,7 +732,29 @@ def sympy_tools() -> tuple[Tool, ...]:
                 "required": ["matrix", "operation"],
             },
             matrix_calculate,
-            claim_kinds=("equation", "derivation", "condition", "conclusion"),
+            claim_kinds=("definition", "equation", "derivation", "condition", "conclusion"),
+        ),
+        Tool(
+            "matrix_eigenpair_check",
+            "确定性验证本征对：M·v=λ·v 且 ⟨v|v⟩=1。用于核验任何给定的本征值/本征矢断言（如泡利矩阵本征态），"
+            "返回 residual、eigenpair_valid、norm_squared、normalized。",
+            {
+                **object_schema,
+                "properties": {
+                    "matrix": matrix_schema,
+                    "eigenvalue": {"type": "string"},
+                    "eigenvector": {
+                        "type": "array",
+                        "description": "待验证的本征向量分量数组（可含 θ、φ、i 等符号/常数）",
+                        "items": {"type": "string"},
+                    },
+                    "symbols": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["matrix", "eigenvalue", "eigenvector"],
+            },
+            matrix_eigenpair_check,
+            claim_kinds=("definition", "equation", "derivation", "condition", "conclusion"),
+            argument_validator=_validate_scalar_arguments,
         ),
         Tool(
             "angular_momentum",
@@ -474,7 +782,7 @@ def sympy_tools() -> tuple[Tool, ...]:
                 "required": ["expression"],
             },
             dimension_check,
-            claim_kinds=("equation", "derivation", "condition", "conclusion"),
+            claim_kinds=("definition", "equation", "derivation", "condition", "conclusion"),
             argument_validator=_validate_scalar_arguments,
         ),
         Tool(

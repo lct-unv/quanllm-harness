@@ -11,6 +11,12 @@ from time import monotonic
 from ... import __version__
 from ...config import DEFAULT_API_KEY_PATH, HarnessSettings, StageProfile
 from ...contracts import HarnessEvent, HarnessResult, RunStatus
+from ...plugins import (
+    PluginManager,
+    PluginManifest,
+    load_plugin_policy,
+    set_plugin_enabled,
+)
 from ..service import HarnessService
 from ..timing import format_elapsed
 
@@ -38,6 +44,60 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--total-timeout", type=float, default=900.0, help="整次运行墙钟上限（秒）")
     return parser
+
+
+def build_plugin_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="quanllm-harness plugins")
+    subparsers = parser.add_subparsers(dest="plugin_command", required=True)
+    subparsers.add_parser("list", help="列出已发现插件")
+    inspect_parser = subparsers.add_parser("inspect", help="查看一个插件")
+    inspect_parser.add_argument("name")
+    subparsers.add_parser("doctor", help="检查插件兼容性、权限和启动状态")
+    validate_parser = subparsers.add_parser("validate", help="校验插件 manifest JSON")
+    validate_parser.add_argument("manifest", type=Path)
+    enable_parser = subparsers.add_parser("enable", help="将插件加入启用列表")
+    enable_parser.add_argument("name")
+    disable_parser = subparsers.add_parser("disable", help="禁用插件")
+    disable_parser.add_argument("name")
+    return parser
+
+
+def _plugin_command(argv: list[str]) -> int:
+    args = build_plugin_parser().parse_args(argv)
+    if args.plugin_command in {"enable", "disable"}:
+        path = set_plugin_enabled(args.name, args.plugin_command == "enable")
+        print(f"插件配置已更新：{path}")
+        return 0
+    if args.plugin_command == "validate":
+        try:
+            payload = json.loads(args.manifest.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("manifest 根节点必须是对象")
+            manifest = PluginManifest(**payload)
+            manifest.validate()
+        except Exception as exc:
+            print(f"插件 manifest 无效：{type(exc).__name__}: {exc}", file=sys.stderr)
+            return 1
+        print(json.dumps({"valid": True, "name": manifest.name}, ensure_ascii=False))
+        return 0
+    manager = PluginManager.discover(load_plugin_policy())
+    try:
+        if args.plugin_command == "doctor":
+            payload = manager.doctor()
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            return 0 if payload["ok"] else 1
+        statuses = manager.statuses()
+        if args.plugin_command == "inspect":
+            matches = [item for item in statuses if item["name"] == args.name]
+            if not matches:
+                print(f"未发现插件：{args.name}", file=sys.stderr)
+                return 1
+            print(json.dumps(matches[0], ensure_ascii=False, indent=2))
+            return 0
+        print(json.dumps(statuses, ensure_ascii=False, indent=2))
+        return 0
+    finally:
+        manager.shutdown()
 
 
 class TerminalEvents:
@@ -98,12 +158,22 @@ def _settings_from_args(args: argparse.Namespace) -> HarnessSettings:
         parallel_solvers=not args.no_parallel,
         run_directory=args.run_dir,
         total_timeout_seconds=args.total_timeout,
+        plugin_policy=load_plugin_policy(),
+        plugin_provider=os.environ.get("QUANLLM_PLUGIN_PROVIDER", ""),
     )
 
 
 def _render_result(result: HarnessResult, *, as_json: bool) -> int:
     if as_json:
-        print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+        # Machine-readable output must always be valid UTF-8, independent of the
+        # Windows console code page (GBK cannot encode e.g. '²', Greek, math
+        # symbols and would crash mid-print). Write raw UTF-8 bytes.
+        data = json.dumps(result.to_dict(), ensure_ascii=False, indent=2).encode("utf-8")
+        try:
+            sys.stdout.buffer.write(data + b"\n")
+            sys.stdout.buffer.flush()
+        except Exception:
+            print(data.decode("utf-8", errors="replace"), flush=True)
     else:
         print(f"\n助手：{result.answer}")
         print(
@@ -152,10 +222,41 @@ def _interactive(service: HarnessService) -> int:
         _render_result(result, as_json=False)
 
 
+def _configure_windows_console_utf8() -> None:
+    """Best-effort switch the Windows console to UTF-8 and make Python emit UTF-8.
+
+    Fixes UnicodeEncodeError on the default GBK/936 code page (e.g. '†' / '⟨⟩'
+    in tool capabilities) and mojibake for Chinese output. Safe no-op elsewhere.
+    """
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+            ctypes.windll.kernel32.SetConsoleCP(65001)
+        except Exception:
+            pass
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            reconfigure = getattr(stream, "reconfigure", None)
+            if callable(reconfigure):
+                reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    _configure_windows_console_utf8()
+    effective_argv = list(argv) if argv is not None else sys.argv[1:]
+    if effective_argv[:1] == ["plugins"]:
+        return _plugin_command(effective_argv[1:])
+    args = build_parser().parse_args(effective_argv)
     if args.capabilities:
-        print(json.dumps(HarnessService.capabilities(), ensure_ascii=False, indent=2))
+        service = HarnessService(HarnessSettings(plugin_policy=load_plugin_policy()))
+        try:
+            print(json.dumps(service.capabilities(), ensure_ascii=False, indent=2))
+        finally:
+            service.close()
         return 0
     if args.graph:
         print(json.dumps(HarnessService.execution_graph(), ensure_ascii=False, indent=2))
@@ -165,16 +266,19 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    if args.interactive:
-        return _interactive(service)
-    if args.question:
-        question = " ".join(args.question).strip()
-    elif sys.stdin.isatty():
-        question = input("你：").strip()
-    else:
-        question = sys.stdin.read().strip()
-    if not question:
-        print("问题不能为空", file=sys.stderr)
-        return 1
-    sink = None if args.json else TerminalEvents(show_reasoning=True)
-    return _render_result(service.answer(question, event_sink=sink), as_json=args.json)
+    try:
+        if args.interactive:
+            return _interactive(service)
+        if args.question:
+            question = " ".join(args.question).strip()
+        elif sys.stdin.isatty():
+            question = input("你：").strip()
+        else:
+            question = sys.stdin.read().strip()
+        if not question:
+            print("问题不能为空", file=sys.stderr)
+            return 1
+        sink = None if args.json else TerminalEvents(show_reasoning=True)
+        return _render_result(service.answer(question, event_sink=sink), as_json=args.json)
+    finally:
+        service.close()

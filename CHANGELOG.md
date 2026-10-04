@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+## 0.1.4 - 2026-10-04
+
+- Hardened the five-case reasoning/recovery path: structured claim extraction now salvages valid
+  fields and uses source-backed fallbacks, optional verifier failures remain telemetry when another
+  semantic pass succeeds, malformed tool arguments are repaired or regenerated tool-free, repeated
+  tool failures have a per-tool budget, and displayed matrix products receive a deterministic
+  transcription check before delivery.
+- Added round-two recovery monotonicity guards: synthesis failure falls back to the latest solver
+  candidate, synthesized candidates cannot replace a source with a higher deterministic-correctness
+  score, and deterministic checks now localize inverse row/column verification errors, validate
+  named matrix products such as `W=VU`, and enforce explicit per-eigenvalue vector checks.
+- Added exact recovery gates for scaled/plain matrices, complex projectors and norm ratios,
+  inverse matrices, eigenspectra and eigenpairs, ordered state transformations, and final quantum
+  states. Locally provable corrections are delivered with explicit degraded telemetry when model
+  repair or synthesis fails to converge.
+- Added a fallback independent solver and an exact local projection fallback so provider timeouts
+  no longer discard a verified result, while preserving timeout and protocol failures in the run
+  record.
+- Added the ten-case reasoning/recovery reproduction runner and regression coverage for every
+  failure mode found during real-gateway validation.
+- Removed an intermittent REST integration shutdown deadlock by isolating synchronous answer
+  execution from the event loop's default executor.
+
+### Contributor
+
+- Hxttt1 <3034557373@qq.com>
+
 ## 0.1.3 - 2026-09-18
 
 - Added the complete four-stage plugin platform directly to `quanllm-harness`: stable manifest and

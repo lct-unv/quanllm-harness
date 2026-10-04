@@ -7,10 +7,16 @@ from .protocols.json_request import (
 from .protocols.json_request import (
     decode_argument_objects as _decode_argument_objects,
 )
-from .providers import OpenAIQuanLLMProvider, ProviderError, QuanLLMProvider
+from .providers import (
+    InvalidToolArgumentsError,
+    OpenAIQuanLLMProvider,
+    ProviderError,
+    QuanLLMProvider,
+)
 
 __all__ = [
     "OpenAIQuanLLMProvider",
+    "InvalidToolArgumentsError",
     "ProviderError",
     "QuanLLMProvider",
     "StructuredResponseError",

@@ -9,7 +9,7 @@ from typing import Any
 from ..config import HarnessSettings
 from ..contracts import EventSink, HarnessEvent, ModelResponse, ToolCall, Usage
 from ..protocols.json_request import StructuredResponseError, decode_argument_objects
-from .base import ProviderError, QuanLLMProvider
+from .base import InvalidToolArgumentsError, ProviderError, QuanLLMProvider
 
 _REASONING_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.S)
 
@@ -143,7 +143,19 @@ class OpenAIQuanLLMProvider(QuanLLMProvider):
             try:
                 argument_objects = decode_argument_objects(slot["arguments"])
             except (json.JSONDecodeError, StructuredResponseError) as exc:
-                raise ProviderError(f"{stage} 的工具参数不是合法 JSON") from exc
+                self._emit(
+                    event_sink,
+                    "tool_arguments_invalid",
+                    stage,
+                    tool=slot["name"],
+                    raw_arguments=slot["arguments"],
+                    parse_error=str(exc),
+                )
+                if content_parts:
+                    continue
+                raise InvalidToolArgumentsError(
+                    stage, slot["name"], slot["arguments"], str(exc)
+                ) from exc
             for index, arguments in enumerate(argument_objects):
                 call_id = slot["id"] if index == 0 else f"{slot['id']}-{index + 1}"
                 calls.append(ToolCall(call_id, slot["name"], arguments))

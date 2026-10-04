@@ -212,7 +212,7 @@ class PluginManager:
         try:
             return Version(version("quanllm-harness"))
         except Exception:
-            return Version("0.1.3")
+            return Version("0.1.4")
 
     def _enabled(self, name: str) -> tuple[bool, str]:
         if name in self.policy.disabled:

@@ -155,7 +155,6 @@ def _pauli_exp_identity_ok(answer: str) -> bool:
     # exp(iασ_n) = I cosα + i σ_n sinα（写成 cosh/sinh 是错的）
     if "cosh" in a or "sinh" in a:
         # cosh/sinh 若只出现在 3(3) 的 e^A B e^{-A}=iσz cosh(2w)+σy sinh(2w)，不算错
-        a.split("e^ab")[-1] if "e^ab" in a else ""
         if "coshα" in a or "sinhα" in a or "cosh(α" in a or "sinh(α" in a:
             return False
         return ("cosα" in a or "cos(α" in a) and ("sinα" in a or "sin(α" in a)

@@ -4,7 +4,7 @@ from collections import deque
 
 from quanllm_harness import HarnessSettings, QuanLLMHarness, RunStatus
 from quanllm_harness.contracts import ModelResponse, Usage
-from quanllm_harness.provider import QuanLLMProvider
+from quanllm_harness.provider import ProviderError, QuanLLMProvider
 from quanllm_harness.tools import ToolRegistry
 
 
@@ -28,6 +28,32 @@ class ScriptedProvider(QuanLLMProvider):
 
 def no_tools() -> ToolRegistry:
     return ToolRegistry()
+
+
+def test_single_solver_failure_falls_back_to_independent_solver():
+    provider = ScriptedProvider(
+        {
+            "任务路由": [
+                '{"depth":"standard","suspicious_input":false,"requires_tools":false,'
+                '"requires_independent_solver":false,"language":"zh","reason":"计算题"}'
+            ],
+            "主求解": [ProviderError("超时")],
+            "独立求解": ["备用答案：1/21。"],
+            "断言提取": ['{"claims":[],"requirements":[]}'],
+            "工具核验计划": ['{"checks":[],"not_checkable":[]}'],
+            "形式与学科核验": ['{"canonical_core":[],"issues":[],"summary":"通过"}'],
+        }
+    )
+
+    result = QuanLLMHarness(
+        provider=provider,
+        settings=HarnessSettings(max_tool_rounds=0, semantic_verifier_count=1),
+        tools=no_tools(),
+    ).answer("请计算投影比。")
+
+    assert result.status is RunStatus.DEGRADED_DELIVERY
+    assert result.answer == "备用答案：1/21。"
+    assert any(event.kind == "solver_fallback" for event in result.events)
 
 
 def test_verified_single_solver_flow_uses_separate_request_modes():
@@ -140,6 +166,69 @@ def test_protocol_warning_never_becomes_verified():
     assert result.verification.protocol_warnings
 
 
+def test_optional_verifier_failure_does_not_downgrade_successfully_verified_answer():
+    provider = ScriptedProvider(
+        {
+            "任务路由": [
+                '{"depth":"standard","suspicious_input":false,"requires_tools":false,'
+                '"requires_independent_solver":false,"language":"zh","reason":"测试"}'
+            ],
+            "主求解": ["答案包含结论 A。"],
+            "断言提取": [
+                '{"claims":[{"id":"C-001","quote":"结论 A",'
+                '"kind":"conclusion","importance":"major"}],"requirements":[]}'
+            ],
+            "工具核验计划": [
+                '{"checks":[],"not_checkable":[{"claim_id":"C-001","reason":"概念结论"}]}'
+            ],
+            "形式与学科核验": ['{"issues":[],"summary":"学科核验通过"}'],
+            "要求与教学核验": ["not json", "still not json"],
+        }
+    )
+    result = QuanLLMHarness(
+        provider=provider,
+        settings=HarnessSettings(max_tool_rounds=0, semantic_verifier_count=2),
+        tools=no_tools(),
+    ).answer("测试问题")
+
+    assert result.status is RunStatus.VERIFIED
+    assert result.verification.protocol_warnings
+    assert result.verification.verifier_summaries == ("学科核验通过",)
+
+
+def test_input_issue_is_rejected_when_candidate_discloses_no_ambiguity():
+    provider = ScriptedProvider(
+        {
+            "任务路由": [
+                '{"depth":"standard","suspicious_input":false,"requires_tools":false,'
+                '"requires_independent_solver":false,"language":"zh","reason":"清晰计算题"}'
+            ],
+            "主求解": ["答案完整且结论正确。"],
+            "断言提取": [
+                '{"claims":[{"id":"C-001","quote":"结论正确",'
+                '"kind":"conclusion","importance":"major"}],"requirements":[]}'
+            ],
+            "工具核验计划": [
+                '{"checks":[],"not_checkable":[{"claim_id":"C-001","reason":"测试"}]}'
+            ],
+            "形式与学科核验": [
+                '{"issues":[{"origin":"input","severity":"minor",'
+                '"quote":"清晰问题","problem":"误报为输入歧义",'
+                '"correction":"","evidence_ids":[]}],"summary":"误报"}'
+            ],
+        }
+    )
+    result = QuanLLMHarness(
+        provider=provider,
+        settings=HarnessSettings(max_tool_rounds=0, semantic_verifier_count=1),
+        tools=no_tools(),
+    ).answer("清晰问题")
+
+    assert result.status is RunStatus.VERIFIED
+    assert result.verification.input_issues == []
+    assert all(stage != "问题裁决" for stage, _, _ in provider.calls)
+
+
 def test_issue_adjudication_protocol_failure_never_triggers_repair():
     candidate = "答案使用标准高斯积分公式得到归一化结果。"
     provider = ScriptedProvider(
@@ -218,3 +307,86 @@ def test_duplicate_verifier_reports_are_adjudicated_once():
     assert result.status is RunStatus.VERIFIED
     assert result.repair_rounds == 0
     assert [stage for stage, _, _ in provider.calls].count("问题裁决") == 1
+
+
+def test_synthesis_failure_falls_back_to_deliverable_solver_candidate():
+    provider = ScriptedProvider(
+        {
+            "任务路由": [
+                '{"depth":"deep","suspicious_input":false,"requires_tools":false,'
+                '"requires_independent_solver":true,"language":"zh","reason":"复杂题"}'
+            ],
+            "主求解": ["主求解已恢复的正确答案。"],
+            "独立求解": ["独立正确答案。"],
+            "候选综合": [ProviderError("候选综合的工具参数不是合法 JSON")],
+            "断言提取": [
+                '{"claims":[{"id":"C-001","quote":"正确答案",'
+                '"kind":"conclusion","importance":"major"}],"requirements":[]}'
+            ],
+            "工具核验计划": [
+                '{"checks":[],"not_checkable":[{"claim_id":"C-001","reason":"测试"}]}'
+            ],
+            "形式与学科核验": ['{"issues":[],"summary":"通过"}'],
+        }
+    )
+    result = QuanLLMHarness(
+        provider=provider,
+        settings=HarnessSettings(
+            max_tool_rounds=0,
+            semantic_verifier_count=1,
+            parallel_solvers=False,
+        ),
+        tools=no_tools(),
+    ).answer("复杂测试")
+
+    assert result.answer == "主求解已恢复的正确答案。"
+    assert result.status is RunStatus.DEGRADED_DELIVERY
+    assert any(event.kind == "synthesis_fallback" for event in result.events)
+
+
+def test_synthesis_regression_is_blocked_by_deterministic_invariant():
+    question = r"""
+    U=\frac{1}{\sqrt{2}}\begin{bmatrix}1&i\\i&1\end{bmatrix},
+    V=\begin{bmatrix}1&0\\0&i\end{bmatrix}. Compute W=VU.
+    """
+    correct = r"""
+    正确乘积：$W=VU=\frac{1}{\sqrt{2}}
+    \begin{bmatrix}1&i\\-1&i\end{bmatrix}$.
+    """
+    regressed = r"""
+    错误综合：$W=VU=\begin{bmatrix}
+    1/\sqrt{2}&-i/\sqrt{2}\\i/\sqrt{2}&1/\sqrt{2}
+    \end{bmatrix}$.
+    """
+    provider = ScriptedProvider(
+        {
+            "任务路由": [
+                '{"depth":"deep","suspicious_input":false,"requires_tools":false,'
+                '"requires_independent_solver":true,"language":"zh","reason":"矩阵题"}'
+            ],
+            "主求解": [correct],
+            "独立求解": [correct],
+            "候选综合": [regressed],
+            "断言提取": [
+                '{"claims":[{"id":"C-001","quote":"正确乘积",'
+                '"kind":"conclusion","importance":"major"}],"requirements":[]}'
+            ],
+            "工具核验计划": [
+                '{"checks":[],"not_checkable":[{"claim_id":"C-001","reason":"回归测试"}]}'
+            ],
+            "形式与学科核验": ['{"issues":[],"summary":"通过"}'],
+        }
+    )
+    result = QuanLLMHarness(
+        provider=provider,
+        settings=HarnessSettings(
+            max_tool_rounds=0,
+            semantic_verifier_count=1,
+            parallel_solvers=False,
+        ),
+        tools=no_tools(),
+    ).answer(question)
+
+    assert result.answer == correct
+    assert result.status is RunStatus.VERIFIED
+    assert any(event.kind == "synthesis_regression_blocked" for event in result.events)

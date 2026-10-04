@@ -138,50 +138,53 @@ class ClaimExtractionProtocol:
                 if not isinstance(item, dict):
                     continue
                 claim_id = str(item.get("id") or f"C-{index:03d}")
+                if claim_id in seen_ids or not re.fullmatch(r"C-\d+", claim_id):
+                    claim_id = f"C-{index:03d}"
+                    while claim_id in seen_ids:
+                        index += 1
+                        claim_id = f"C-{index:03d}"
                 quote = str(item.get("quote") or "").strip()
                 kind = str(item.get("kind") or "")
                 importance = str(item.get("importance") or "")
-                if kind not in allowed_kinds or importance not in {"major", "minor"}:
-                    continue
+                if kind not in allowed_kinds:
+                    kind = "conclusion"
+                if importance not in {"major", "minor"}:
+                    importance = "major"
                 # A single unlocatable or duplicate claim must not invalidate the
                 # whole extraction: keep the claims that can be verified and let
                 # the mathematical verifier run on them.
-                if claim_id in seen_ids or not contains_quote(quote, candidate):
+                if not contains_quote(quote, candidate):
                     continue
                 seen_ids.add(claim_id)
                 claims.append(Claim(claim_id, quote, kind, importance))
             if not claims:
-                missing = [
-                    str(item.get("quote"))[:60]
-                    for item in raw_claims
-                    if isinstance(item, dict) and str(item.get("quote") or "").strip()
-                ]
-                raise StructuredResponseError(
-                    "所有断言的引文均无法在候选答案中定位："
-                    + (" | ".join(missing[:5]) if missing else "（claims 为空或全部非法）")
-                )
+                # The whole candidate is a stable source span. Falling back to
+                # it keeps verification coverage without trusting a paraphrase.
+                fallback = candidate.strip()
+                if not fallback:
+                    raise StructuredResponseError("候选答案为空，无法生成断言")
+                claims = [Claim("C-001", fallback, "conclusion", "major")]
             requirements: list[Requirement] = []
             seen_ids.clear()
             for index, item in enumerate(raw_requirements, 1):
                 if not isinstance(item, dict):
                     continue
                 requirement_id = str(item.get("id") or f"R-{index:03d}")
+                if requirement_id in seen_ids or not re.fullmatch(r"R-\d+", requirement_id):
+                    requirement_id = f"R-{index:03d}"
+                    while requirement_id in seen_ids:
+                        index += 1
+                        requirement_id = f"R-{index:03d}"
                 quote = str(item.get("quote") or "").strip()
-                if requirement_id in seen_ids or not contains_quote(quote, question):
+                if not contains_quote(quote, question):
                     continue
                 seen_ids.add(requirement_id)
                 requirements.append(Requirement(requirement_id, quote))
             if not requirements:
-                # Best effort: keep the model's requirement texts when none can be
-                # located verbatim so the requirements verifier still has content.
-                requirements = [
-                    Requirement(
-                        str(item.get("id") or f"R-{index:03d}"),
-                        str(item.get("quote") or "").strip(),
-                    )
-                    for index, item in enumerate(raw_requirements, 1)
-                    if isinstance(item, dict) and str(item.get("quote") or "").strip()
-                ]
+                # Never retain unlocatable paraphrases as if they were the
+                # user's wording. The full question is the deterministic span.
+                if raw_requirements and question.strip():
+                    requirements = [Requirement("R-001", question.strip())]
             return claims, requirements
 
         return self.runtime.json(

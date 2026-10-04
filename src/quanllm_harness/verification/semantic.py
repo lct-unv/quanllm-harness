@@ -29,7 +29,7 @@ class SemanticVerifier:
         requirements: Sequence[Requirement],
         evidence: Sequence[Evidence],
         reference: str,
-    ) -> tuple[list[Issue], list[str], list[str]]:
+    ) -> tuple[list[Issue], list[str], list[str], int]:
         common = (
             "【原始问题】\n"
             + question
@@ -81,7 +81,7 @@ class SemanticVerifier:
                 adjudicated = None
             if adjudicated is not None:
                 accepted.append(adjudicated)
-        return accepted, summaries, warnings
+        return accepted, summaries, warnings, len(passes)
 
     @staticmethod
     def _merge_issues(issues: Sequence[Issue]) -> Issue:
@@ -104,6 +104,13 @@ class SemanticVerifier:
         evidence: Sequence[Evidence],
         issue: Issue,
     ) -> Issue | None:
+        if issue.origin.value == "input" and not self._discloses_input_ambiguity(candidate):
+            # Input-origin findings are only meaningful when the answer itself
+            # had to disclose an unresolved ambiguity. This deterministic gate
+            # prevents a verifier from relabeling a clear, fully answered prompt
+            # as user-input damage.
+            return None
+
         def validate(data):
             if data.get("decision") not in {"valid", "invalid"}:
                 raise StructuredResponseError("问题裁决 decision 非法")
@@ -136,3 +143,21 @@ class SemanticVerifier:
             correction=str(data.get("correction") or issue.correction).strip(),
             evidence_ids=issue.evidence_ids,
         )
+
+    @staticmethod
+    def _discloses_input_ambiguity(candidate: str) -> bool:
+        lowered = candidate.casefold()
+        markers = (
+            "歧义",
+            "无法唯一",
+            "不能唯一",
+            "输入损坏",
+            "题意不明",
+            "ambiguous",
+            "ambiguity",
+            "cannot uniquely",
+            "can't uniquely",
+            "underspecified",
+            "under-specified",
+        )
+        return any(marker in lowered for marker in markers)

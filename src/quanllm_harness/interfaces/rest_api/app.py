@@ -128,8 +128,28 @@ def create_app(
     async def answer(payload: AnswerRequest) -> AnswerResponse:
         ensure_configured()
         request_id = uuid4().hex
+        loop = asyncio.get_running_loop()
+        completed: asyncio.Future[Any] = loop.create_future()
+
+        def finish(result: Any = None, error: BaseException | None = None) -> None:
+            if completed.done():
+                return
+            if error is not None:
+                completed.set_exception(error)
+            else:
+                completed.set_result(result)
+
+        def worker() -> None:
+            try:
+                result = active_service.answer(payload.question.strip())
+            except BaseException as exc:
+                loop.call_soon_threadsafe(finish, None, exc)
+            else:
+                loop.call_soon_threadsafe(finish, result, None)
+
+        Thread(target=worker, name=f"quanllm-sync-{request_id[:8]}", daemon=True).start()
         try:
-            result = await asyncio.to_thread(active_service.answer, payload.question.strip())
+            result = await completed
         except Exception as exc:
             LOGGER.exception("Harness request %s failed", request_id)
             raise HTTPException(status_code=502, detail="Harness execution failed") from exc

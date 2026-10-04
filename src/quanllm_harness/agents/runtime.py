@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, overload
 from ..config import HarnessSettings
 from ..contracts import Candidate, Claim, EventSink, Evidence, ModelResponse, Usage
 from ..provider import QuanLLMProvider
+from ..providers import InvalidToolArgumentsError
 from ..tools import ToolRegistry
 
 if TYPE_CHECKING:
@@ -147,24 +148,51 @@ class AgentRuntime:
             {"role": "user", "content": user},
         ]
         used_tool = False
+        tool_attempted = False
         seen: set[tuple[str, str]] = set()
+        failed_tools: dict[str, int] = {}
+        blocked_tools: set[str] = set()
         for round_index in range(self.settings.max_tool_rounds + 1):
-            response = self._record(
-                self.provider.complete(
-                    messages,
-                    stage=stage,
-                    tools=self.tools.schemas()
-                    if allow_tools and round_index < self.settings.max_tool_rounds
-                    else (),
-                    event_sink=self.event_sink,
+            available_schemas = [
+                schema
+                for schema in self.tools.schemas()
+                if schema.get("function", {}).get("name") not in blocked_tools
+            ]
+            try:
+                response = self._record(
+                    self.provider.complete(
+                        messages,
+                        stage=stage,
+                        tools=(
+                            available_schemas
+                            if allow_tools and round_index < self.settings.max_tool_rounds
+                            else ()
+                        ),
+                        event_sink=self.event_sink,
+                    )
                 )
-            )
+            except InvalidToolArgumentsError as exc:
+                tool_attempted = True
+                if exc.tool:
+                    blocked_tools.add(exc.tool)
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "上一次工具参数序列化失败，该调用未执行。"
+                            "请改用直接推导并在答案中自检；"
+                            "不得声称已完成工具验证。"
+                        ),
+                    }
+                )
+                continue
             messages.append(_public_assistant_message(response))
             if not response.tool_calls:
                 if (
                     require_tool
                     and self.tools.tools
                     and not used_tool
+                    and not tool_attempted
                     and round_index < self.settings.max_tool_rounds
                 ):
                     messages.append(
@@ -182,6 +210,7 @@ class AgentRuntime:
             for call in response.tool_calls:
                 from .tool_call_reviewer import ToolCallReviewerAgent
 
+                tool_attempted = True
                 try:
                     review = ToolCallReviewerAgent(self).review(
                         question=user,
@@ -204,6 +233,9 @@ class AgentRuntime:
                         event_sink=self.event_sink,
                     )
                     self.upsert_evidence(evidence)
+                    failed_tools[call.name] = failed_tools.get(call.name, 0) + 1
+                    if failed_tools[call.name] >= self.settings.max_tool_failures_per_name:
+                        blocked_tools.add(call.name)
                     messages.append(
                         {
                             "role": "tool",
@@ -222,6 +254,9 @@ class AgentRuntime:
                         event_sink=self.event_sink,
                     )
                     self.upsert_evidence(evidence)
+                    failed_tools[call.name] = failed_tools.get(call.name, 0) + 1
+                    if failed_tools[call.name] >= self.settings.max_tool_failures_per_name:
+                        blocked_tools.add(call.name)
                     messages.append(
                         {
                             "role": "tool",
@@ -262,6 +297,12 @@ class AgentRuntime:
                     )
                 self.upsert_evidence(evidence)
                 used_tool = used_tool or evidence.ok
+                if evidence.ok:
+                    failed_tools.pop(reviewed_name, None)
+                else:
+                    failed_tools[reviewed_name] = failed_tools.get(reviewed_name, 0) + 1
+                    if failed_tools[reviewed_name] >= self.settings.max_tool_failures_per_name:
+                        blocked_tools.add(reviewed_name)
                 messages.append(
                     {
                         "role": "tool",

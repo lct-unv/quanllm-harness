@@ -12,6 +12,7 @@ from ..contracts import (
 )
 from ..plugins import PluginVerificationContext, PluginVerificationResult
 from ..protocols.claim_extraction import ClaimExtractionProtocol
+from .deterministic import deterministic_candidate_issues
 from .mathematical import MathematicalVerifier
 from .semantic import SemanticVerifier
 from .structural import StructuralSnapshot
@@ -97,7 +98,9 @@ class VerificationEngine:
             )
         snapshot = StructuralSnapshot(claims, requirements, all_evidence)
         snapshot.validate_references()
-        issues, summaries, semantic_warnings = SemanticVerifier(self.runtime).verify(
+        issues, summaries, semantic_warnings, successful_semantic_passes = SemanticVerifier(
+            self.runtime
+        ).verify(
             question,
             candidate,
             claims,
@@ -106,7 +109,7 @@ class VerificationEngine:
             reference,
         )
         warnings.extend(semantic_warnings)
-        issue_list = list(issues)
+        issue_list = [*deterministic_candidate_issues(question, candidate), *issues]
         if self.runtime.plugin_manager:
             plugin_context = PluginVerificationContext(
                 question=question,
@@ -133,10 +136,14 @@ class VerificationEngine:
                 except Exception as exc:
                     warnings.append(self._warning(f"插件核验器 {verifier_name}", exc))
         final_issues = tuple(issue_list)
-        if warnings and not any(issue.origin is IssueOrigin.MODEL for issue in final_issues):
-            # Surface an explicit, machine-readable signal that the verification
-            # pipeline degraded and the conclusion was NOT mathematically verified,
-            # instead of silently delivering it as if the math check had run.
+        if (
+            warnings
+            and successful_semantic_passes == 0
+            and not any(issue.origin is IssueOrigin.MODEL for issue in final_issues)
+        ):
+            # Optional checkpoints may fail without downgrading a candidate that
+            # another verifier actually checked. Only total semantic-verification
+            # loss is delivery-critical.
             final_issues = (
                 *final_issues,
                 Issue(

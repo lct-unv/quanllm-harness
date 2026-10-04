@@ -39,6 +39,7 @@ def save_run(
                 "timeout_seconds": settings.structured.timeout_seconds,
             },
             "parallel_solvers": settings.parallel_solvers,
+            "max_tool_failures_per_name": settings.max_tool_failures_per_name,
             "semantic_verifier_count": settings.semantic_verifier_count,
             "plugin_provider": settings.plugin_provider,
             "plugins": {

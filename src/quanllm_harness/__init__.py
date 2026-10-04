@@ -20,7 +20,7 @@ from .public_api import create_harness
 try:
     __version__ = version("quanllm-harness")
 except PackageNotFoundError:
-    __version__ = "0.1.3"
+    __version__ = "0.1.4"
 
 __all__ = [
     "HarnessEvent",

@@ -16,5 +16,23 @@
     "parser": "arguments",
     "input": "{\"x\": 1}{\"x\": 2}",
     "expected": [{"x": 1}, {"x": 2}]
+  },
+  {
+    "id": "fenced-tool-arguments",
+    "parser": "arguments",
+    "input": "```json\n{\"x\": 1}\n```",
+    "expected": [{"x": 1}]
+  },
+  {
+    "id": "trailing-comma-tool-arguments",
+    "parser": "arguments",
+    "input": "{\"x\": 1,}",
+    "expected": [{"x": 1}]
+  },
+  {
+    "id": "single-quoted-tool-arguments",
+    "parser": "arguments",
+    "input": "{'x': 1}",
+    "expected": [{"x": 1}]
   }
 ]

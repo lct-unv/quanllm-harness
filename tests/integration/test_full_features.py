@@ -10,8 +10,10 @@ from quanllm_harness.agents import AgentRuntime, HarnessAgents
 from quanllm_harness.cli import main
 from quanllm_harness.contracts import Claim, Evidence, ModelResponse, ToolCall, Usage
 from quanllm_harness.orchestration import RunCancelled
+from quanllm_harness.protocols.claim_extraction import ClaimExtractionProtocol
 from quanllm_harness.provider import QuanLLMProvider
-from quanllm_harness.tools import ToolRegistry, default_tool_registry
+from quanllm_harness.providers import InvalidToolArgumentsError
+from quanllm_harness.tools import Tool, ToolRegistry, default_tool_registry
 from quanllm_harness.tools.sympy_backend import (
     boundary_match,
     dimension_check,
@@ -84,6 +86,139 @@ def test_protocol_validation_retries_once():
     policy = HarnessAgents(runtime).route("测试")
     assert policy.depth == "simple"
     assert provider.count == 2
+
+
+def test_claim_extraction_salvages_duplicate_ids_bad_enums_and_unlocatable_quotes():
+    class ExtractionProvider(QuanLLMProvider):
+        def complete(self, messages, *, stage, structured=False, tools=(), event_sink=None):
+            return ModelResponse(
+                content=(
+                    '{"claims":['
+                    '{"id":"C-001","quote":"不存在的改写","kind":"answer",'
+                    '"importance":"critical"},'
+                    '{"id":"C-001","quote":"真实结论","kind":"answer",'
+                    '"importance":"critical"}],'
+                    '"requirements":[{"id":"R-001","quote":"改写的要求"}]}'
+                ),
+                finish_reason="stop",
+            )
+
+    runtime = AgentRuntime(ExtractionProvider(), ToolRegistry(), HarnessSettings())
+    claims, requirements = ClaimExtractionProtocol(runtime).extract(
+        "请计算并验证。", "计算过程。真实结论。"
+    )
+
+    assert [(claim.id, claim.quote, claim.kind, claim.importance) for claim in claims] == [
+        ("C-001", "真实结论", "conclusion", "major")
+    ]
+    assert [(item.id, item.quote) for item in requirements] == [("R-001", "请计算并验证。")]
+
+
+def test_claim_extraction_falls_back_to_candidate_when_all_quotes_are_unlocatable():
+    class ExtractionProvider(QuanLLMProvider):
+        def complete(self, messages, *, stage, structured=False, tools=(), event_sink=None):
+            return ModelResponse(
+                content=(
+                    '{"claims":[{"id":"C-001","quote":"模型改写的内容",'
+                    '"kind":"conclusion","importance":"major"}],"requirements":[]}'
+                ),
+                finish_reason="stop",
+            )
+
+    candidate = "可定位的完整候选答案。"
+    runtime = AgentRuntime(ExtractionProvider(), ToolRegistry(), HarnessSettings())
+    claims, _ = ClaimExtractionProtocol(runtime).extract("问题", candidate)
+
+    assert claims == [Claim("C-001", candidate, "conclusion", "major")]
+
+
+def test_invalid_tool_json_regenerates_without_tools():
+    class InvalidArgumentsProvider(QuanLLMProvider):
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, messages, *, stage, structured=False, tools=(), event_sink=None):
+            self.calls += 1
+            if self.calls == 1:
+                assert tools
+                raise InvalidToolArgumentsError(stage, "symbolic_calculate", "{bad", "bad")
+            assert not tools
+            assert "序列化失败" in str(messages[-1]["content"])
+            return ModelResponse(content="手算并自检后的正确答案。", finish_reason="stop")
+
+    provider = InvalidArgumentsProvider()
+    runtime = AgentRuntime(
+        provider,
+        default_tool_registry(),
+        HarnessSettings(max_tool_rounds=1),
+    )
+    result = runtime.reason("求解", "计算题", stage="主求解", require_tool=True)
+
+    assert result.answer == "手算并自检后的正确答案。"
+    assert provider.calls == 2
+
+
+def test_repeated_tool_failure_exhausts_budget_and_switches_to_direct_reasoning():
+    class FailingToolProvider(QuanLLMProvider):
+        def __init__(self):
+            self.solver_calls = 0
+
+        def complete(self, messages, *, stage, structured=False, tools=(), event_sink=None):
+            if stage == "工具调用审查·fragile_tool":
+                return ModelResponse(
+                    content=(
+                        '{"decision":"approve","tool":"fragile_tool",'
+                        '"arguments":{"value":1},"source_anchors":["测试工具"],'
+                        '"expected_boolean":null,"reason":"参数对应原题"}'
+                    ),
+                    finish_reason="stop",
+                )
+            assert stage == "主求解"
+            self.solver_calls += 1
+            if self.solver_calls <= 2:
+                assert tools
+                return ModelResponse(
+                    reasoning="测试工具",
+                    finish_reason="tool_calls",
+                    tool_calls=(
+                        ToolCall(
+                            "call-" + str(self.solver_calls),
+                            "fragile_tool",
+                            {"value": 1},
+                        ),
+                    ),
+                )
+            assert not tools
+            return ModelResponse(content="改用直接计算后得到答案。", finish_reason="stop")
+
+    def fail(_arguments):
+        raise RuntimeError("后端不可用")
+
+    registry = ToolRegistry()
+    registry.register(
+        Tool(
+            name="fragile_tool",
+            description="测试工具",
+            parameters={
+                "type": "object",
+                "properties": {"value": {"type": "integer"}},
+                "required": ["value"],
+                "additionalProperties": False,
+            },
+            handler=fail,
+        )
+    )
+    provider = FailingToolProvider()
+    runtime = AgentRuntime(
+        provider,
+        registry,
+        HarnessSettings(max_tool_rounds=3, max_tool_failures_per_name=2),
+    )
+
+    result = runtime.reason("求解", "测试工具", stage="主求解", require_tool=True)
+
+    assert result.answer == "改用直接计算后得到答案。"
+    assert provider.solver_calls == 3
 
 
 def test_scalar_tool_rejects_ket_notation_before_execution():

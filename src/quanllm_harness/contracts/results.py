@@ -29,6 +29,10 @@ class VerificationReport:
     def input_issues(self) -> list[Issue]:
         return [issue for issue in self.issues if issue.origin is IssueOrigin.INPUT]
 
+    @property
+    def infrastructure_issues(self) -> list[Issue]:
+        return [issue for issue in self.issues if issue.origin is IssueOrigin.INFRASTRUCTURE]
+
 
 @dataclass(frozen=True)
 class HarnessResult:

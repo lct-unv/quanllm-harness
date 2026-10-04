@@ -44,6 +44,8 @@ class OpenAIQuanLLMProvider(QuanLLMProvider):
 
     def __init__(self, settings: HarnessSettings, client: Any | None = None):
         settings.validate()
+        if not settings.model.strip():
+            raise ValueError("内置 QuanLLM Provider 要求配置 model")
         self.settings = settings
         if client is None:
             if not settings.api_key:

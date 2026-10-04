@@ -1,6 +1,10 @@
 from .api import (
     PLUGIN_API_VERSION,
     Cleanup,
+    DomainCandidateUpdate,
+    DomainFinalization,
+    DomainRepairInstruction,
+    DomainStrategy,
     HarnessPlugin,
     PluginContext,
     PluginManifest,
@@ -8,6 +12,7 @@ from .api import (
     PluginStatus,
     PluginVerificationContext,
     PluginVerificationResult,
+    PromptContributor,
     SubprocessToolSpec,
 )
 from .config import (
@@ -21,11 +26,16 @@ from .manager import PluginManager
 __all__ = [
     "PLUGIN_API_VERSION",
     "Cleanup",
+    "DomainCandidateUpdate",
+    "DomainFinalization",
+    "DomainRepairInstruction",
+    "DomainStrategy",
     "HarnessPlugin",
     "PluginContext",
     "PluginManager",
     "PluginManifest",
     "PluginPolicy",
+    "PromptContributor",
     "PluginStatus",
     "PluginVerificationContext",
     "PluginVerificationResult",

@@ -15,7 +15,9 @@ if TYPE_CHECKING:
 PLUGIN_API_VERSION = "1"
 
 SAFE_PLUGIN_PERMISSIONS = (
+    "domains.register",
     "events.subscribe",
+    "prompts.contribute",
     "services.consume",
     "services.provide",
     "tools.register",
@@ -116,9 +118,58 @@ class PluginVerificationResult:
     summary: str = ""
 
 
+@dataclass(frozen=True)
+class DomainRepairInstruction:
+    """One domain-owned repair request executed by the host repair loop."""
+
+    key: str
+    problem: str
+    correction: str
+    quote: str = ""
+    evidence_ids: Sequence[str] = ()
+
+
+@dataclass(frozen=True)
+class DomainCandidateUpdate:
+    """A deterministic candidate rewrite performed before delivery."""
+
+    candidate: str
+    notes: Sequence[str] = ()
+
+
+@dataclass(frozen=True)
+class DomainFinalization:
+    """Domain backstop output merged into the final host report."""
+
+    candidate: str
+    issues: Sequence[Issue] = ()
+    warnings: Sequence[str] = ()
+
+
+class DomainStrategy(Protocol):
+    """Stable domain-policy surface; the host retains orchestration authority."""
+
+    def matches(self, question: str) -> bool: ...
+
+    def candidate_issues(self, question: str, candidate: str) -> Sequence[Issue]: ...
+
+    def fallback_answer(self, question: str) -> str: ...
+
+    def correct_candidate(self, question: str, candidate: str) -> DomainCandidateUpdate: ...
+
+    def repair_instructions(
+        self, question: str, candidate: str
+    ) -> Sequence[DomainRepairInstruction]: ...
+
+    def repair_hint(self, question: str) -> str: ...
+
+    def finalize(self, question: str, candidate: str) -> DomainFinalization: ...
+
+
 PluginVerifier = Callable[[PluginVerificationContext], PluginVerificationResult]
 ProviderFactory = Callable[["HarnessSettings"], "QuanLLMProvider"]
 EventSubscriber = Callable[[HarnessEvent], None]
+PromptContributor = Callable[[str, str], str]
 Cleanup = Callable[[], None]
 
 
@@ -144,6 +195,14 @@ class _ProviderRegistrar(Protocol):
     def register(self, name: str, factory: ProviderFactory) -> None: ...
 
 
+class _DomainRegistrar(Protocol):
+    def register(self, name: str, strategy: DomainStrategy) -> None: ...
+
+
+class _PromptRegistrar(Protocol):
+    def register(self, name: str, contributor: PromptContributor) -> None: ...
+
+
 class _ServiceRegistrar(Protocol):
     def provide(self, name: str, value: Any) -> None: ...
 
@@ -158,6 +217,8 @@ class PluginContext:
     events: _EventRegistrar
     verifiers: _VerifierRegistrar
     providers: _ProviderRegistrar
+    domains: _DomainRegistrar
+    prompts: _PromptRegistrar
     services: _ServiceRegistrar
 
 
@@ -175,6 +236,8 @@ class PluginStatus:
     tools: Sequence[str] = ()
     verifiers: Sequence[str] = ()
     providers: Sequence[str] = ()
+    domains: Sequence[str] = ()
+    prompts: Sequence[str] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -190,4 +253,6 @@ class PluginStatus:
             "tools": list(self.tools),
             "verifiers": list(self.verifiers),
             "providers": list(self.providers),
+            "domains": list(self.domains),
+            "prompts": list(self.prompts),
         }

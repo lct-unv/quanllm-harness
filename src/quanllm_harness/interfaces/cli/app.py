@@ -22,10 +22,10 @@ from ..timing import format_elapsed
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="QuanLLM-v2.0-qm verified answer harness")
+    parser = argparse.ArgumentParser(description="Plugin-driven verified answer harness")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("question", nargs="*", help="待回答问题；省略时从标准输入读取")
-    parser.add_argument("--model", default=os.environ.get("QUANLLM_MODEL", "QuanLLM-v2.0-qm"))
+    parser.add_argument("--model", default=os.environ.get("QUANLLM_MODEL", ""))
     parser.add_argument(
         "--api-key-file",
         type=Path,

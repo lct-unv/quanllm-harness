@@ -3,7 +3,7 @@
 ``importlib.util.find_spec`` only tells whether a module can be *found*, not
 whether it can be *imported*: on Windows a package whose native DLL fails to
 load is findable but ``import`` raises ``ImportError``. Every check that gates
-behaviour on a default quantum backend must use :func:`can_import`, which
+behaviour on an optional backend must use :func:`can_import`, which
 performs a real import and treats any import-time exception as unavailable.
 """
 

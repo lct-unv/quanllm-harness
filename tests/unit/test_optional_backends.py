@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from quanllm_harness.tools.quantum_backends import (
+from quanllm_harness.official_plugins.qm_teaching.quantum_backends import (
     can_import,
     openfermion_algebra,
     pycommute_algebra,

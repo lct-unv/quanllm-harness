@@ -40,25 +40,20 @@ Each stage has both a transport read timeout and a streaming wall-clock deadline
 
 Every tool invocation produces an immutable `Evidence` record with its exact arguments, result, limitations and stable ID. Evidence also records linked claim IDs, whether a one-shot semantic preflight verified input fidelity, and whether a comparison-style result explicitly supports or contradicts the claim. `ok` means only that the Python handler completed. A failed tool invocation is never evidence that a claim is true.
 
-Current backends:
+Core backends:
 
-- SymPy for scalar algebra, calculus, exact matrices, angular momentum coefficients and a
-  structured exact operator backend for canonical, spin and single-mode Fock algebras.
+- SymPy for scalar algebra, calculus, exact matrices, dimensional and boundary checks.
 - mpmath for high-precision integration, local root finding and truncation convergence checks.
-- QuTiP for finite-dimensional numerical state/operator checks.
-- pycommute for bosonic, fermionic and spin operator algebra.
-- OpenFermion for many-body normal ordering and operator algebra.
+
+The enabled `quanllm-qm-teaching` plugin adds structured quantum-operator tools, angular-momentum
+and Fock checks, QuTiP, pycommute, and OpenFermion adapters. None are registered by the core.
 
 The planner must account for every extracted claim by either producing a valid tool call or an explicit `not_checkable` entry. Before every Solver or verification tool execution, a one-shot `ToolCallReviewerAgent` compares the proposed tool and arguments with the original problem and exact claim. It may approve, uniquely correct, or reject the call; review protocol failure never falls through to execution. Python then validates the tool name, JSON Schema, supported claim kind and backend-specific constraints. Exact duplicate computations are cached, while runtime evidence is upserted by stable ID.
 
 Evidence planning and verifier passes are advisory checkpoints, not delivery gates. If a checkpoint still violates its protocol after the bounded retry, the run records a protocol warning and continues through every independent checkpoint that remains usable. Such a run can deliver an answer but cannot receive `verified` status. Every reported candidate issue is adjudicated exactly once; an adjudication protocol failure remains a warning and can never trigger answer repair.
 
-Scalar SymPy operations deliberately reject Dirac notation and abstract operator expressions.
-The built-in operator backend accepts a typed sum-of-monomials AST, preserves multiplication
-order, and reports `zero` plus `resolved`. It rejects mixed algebra families and multi-mode Fock
-relations instead of silently assuming tensor-product commutativity. pycommute and OpenFermion
-are the dedicated default backends for wider many-body algebra; matrices and QuTiP only establish
-facts about the supplied finite-dimensional representation.
+Scalar SymPy operations deliberately reject unsupported structured inputs. Domain plugins own the
+typed schemas, semantics, and limitations of specialized evidence tools.
 
 ## Plugin architecture
 
@@ -71,8 +66,8 @@ Discovery first applies the host enable/disable policy by entry-point name. Disa
 plugins are reported without importing their Python module. Enabled plugins then pass distribution
 digest, API version, harness version, permission, dependency, and manifest validation. Dependencies
 start in topological order and stop in reverse order. A plugin receives only permission-gated
-registrars for Tool, Verifier, Provider, Event, and Service extensions; cross-plugin services also
-require an explicit dependency.
+registrars for Tool, Verifier, Provider, Domain Strategy, Prompt Contributor, Event, and Service extensions;
+cross-plugin services also require an explicit dependency.
 
 In-process plugins are trusted Python and can return a cleanup callback. Subprocess Tool plugins
 use a one-request UTF-8 JSON protocol without a shell, with a deadline, output limit, and reduced
@@ -81,6 +76,13 @@ plugin name, version, digest, and execution mode. Plugin verifier results can ad
 and summaries but have no API for granting `verified`; only the core verification engine owns that
 decision. Extension and lifecycle failures are isolated into status or diagnostics where the core
 can safely continue.
+
+Domain strategies may report deterministic candidate issues, supply an exact fallback when model
+solvers return no answer, request bounded host-controlled repairs, and apply a delivery backstop.
+They cannot change repair budgets, convergence decisions, run status, or mark an answer verified.
+The first-party `quanllm-qm-teaching` plugin owns quantum-teaching prompts, tools, optional backend
+adapters, deterministic gates, and canonical rules. It ships in the main wheel but remains disabled
+until selected by plugin policy.
 
 The legacy `quanllm_harness.tools` group is policy-controlled and compatibility-only.
 
@@ -127,6 +129,8 @@ Gateway credentials come exclusively from the ignored `APIKEY` file in the serve
 - `orchestration` owns graph state, run control and convergence.
 - `tools` owns deterministic capabilities and evidence creation.
 - `plugins` owns the integrated extension contract, policy, discovery, lifecycle and subprocess protocol.
+- `official_plugins` contains first-party domain implementations that use the same permissioned
+  contract as third-party plugins.
 - `verification` composes structural, mathematical and semantic checks.
 - `events` owns thread-safe event delivery.
 - `interfaces` owns CLI, Web and REST presentation plus request isolation.

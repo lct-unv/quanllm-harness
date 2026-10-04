@@ -56,7 +56,8 @@ entry-point 名必须与 `manifest.name` 相同。Tool 名必须以
 - `execution_mode`: `in_process` 或 `subprocess`。
 
 当前权限为 `tools.register`、`verifiers.register`、`events.subscribe`、
-`services.provide`、`services.consume`、`providers.register` 和 `secrets.api_key`。
+`domains.register`、`prompts.contribute`、`services.provide`、`services.consume`、`providers.register` 和
+`secrets.api_key`。
 Provider 必须同时声明后两项；高权限不在默认主机允许列表中。
 
 ## 扩展点
@@ -66,6 +67,9 @@ Provider 必须同时声明后两项；高权限不在默认主机允许列表�
   `Issue`/警告/摘要，不能授予 `verified`。
 - `context.providers.register(name, factory)`: 返回 `QuanLLMProvider`，并通过
   `QUANLLM_PLUGIN_PROVIDER=<plugin>.<provider>` 选择。
+- `context.domains.register(name, strategy)`: 注册领域策略，提供候选门禁、降级答案、
+  受限修复指令和交付前终结。核心仍唯一拥有修复预算、状态转换和最终状态裁决权。
+- `context.prompts.register(name, callback)`: 按阶段贡献领域 system prompt 片段；核心提示词保持领域无关。
 - `context.events.subscribe(callback)`: 订阅 `HarnessEvent`。
 - `context.services.provide/get`: 插件间注入服务。
 
@@ -102,3 +106,17 @@ REST 端的 `GET /api/v1/plugins` 返回同一份 doctor 状态。
 
 旧 `quanllm_harness.tools` entry-point 仍可用，但必须以 `legacy:<entry-name>` 显式启用，
 新开发不应继续使用它。
+
+## 官方领域插件：quanllm-qm-teaching
+
+`quanllm-qm-teaching` 是首个官方领域插件，承载量子力学教学场景的确定性门禁、
+领域提示词、量子专用工具、可选后端、教材标准结果、候选不回退评分、精确降级答案和交付前回写。插件随官方发行包提供，
+但通用核心不会隐式激活它：
+
+```bash
+quanllm-harness plugins enable quanllm-qm-teaching
+quanllm-harness plugins inspect quanllm-qm-teaching
+```
+
+启用后，领域插件只能提供 `Issue`、修复指令和终结结果，不能绕过核心将运行标记为
+`verified`。不启用时，通用 Harness 不执行任何量子力学特异的确定性修复或标准结果回写。

@@ -286,47 +286,6 @@ def compare_expressions(args: Mapping[str, Any]) -> Any:
     return {"equivalent": difference == 0, "simplified_difference": str(difference)}
 
 
-def derive_boundary_equation(args: Mapping[str, Any]) -> Any:
-    """Symbolically derive the matching equation for two piecewise wavefunction
-    branches via log-derivative matching at the boundary point.
-
-    Amplitudes cancel when matching ``ψ_L'/ψ_L = ψ_R'/ψ_R`` at ``x = point``,
-    so the returned ``matching_difference`` is the objective condition that must
-    vanish. For a finite-well even-parity Ansatz ``ψ_L=A cos(kx)`` and
-    ``ψ_R=B exp(-κx)`` at ``x=a`` this yields ``-k*tan(a*k) + κ``, i.e.
-    ``k*tan(ka) = κ``.
-    """
-    sp = _sympy()
-    symbols = list(args.get("symbols") or [])
-    variable = str(args.get("variable", "x"))
-    left = _parse(args.get("left_expression"), sp, symbols)
-    right = _parse(args.get("right_expression"), sp, symbols)
-    point = _parse(args.get("point"), sp, symbols)
-    x = _locals(sp, symbols + [variable])[_clean_symbol(variable)]
-
-    def evaluate(expr):
-        return sp.simplify(expr.subs({x: point}))
-
-    left_value = evaluate(left)
-    right_value = evaluate(right)
-    left_derivative = evaluate(sp.diff(left, x))
-    right_derivative = evaluate(sp.diff(right, x))
-    if left_value == 0 or right_value == 0:
-        raise ValueError("边界处波函数为零，无法用 log-derivative 匹配（请改用直接连续性方程）")
-    lhs_log = sp.simplify(left_derivative / left_value)
-    rhs_log = sp.simplify(right_derivative / right_value)
-    difference = sp.simplify(lhs_log - rhs_log)
-    return {
-        "left_value": str(left_value),
-        "right_value": str(right_value),
-        "left_log_derivative": str(lhs_log),
-        "right_log_derivative": str(rhs_log),
-        "matching_difference": str(difference),
-        "derived_matching_equation": str(sp.Eq(difference, 0)),
-        "matched": difference == 0,
-    }
-
-
 def solve_equation(args: Mapping[str, Any]) -> Any:
     sp = _sympy()
     variable = str(args.get("variable", "x"))
@@ -380,9 +339,8 @@ def compare_matrices(args: Mapping[str, Any]) -> Any:
 def matrix_eigenpair_check(args: Mapping[str, Any]) -> Any:
     """Deterministically verify a claimed eigenpair: M·v = λ·v and ⟨v|v⟩=1.
 
-    Catches wrong or non-normalized eigenvectors (e.g. Pauli spin-projection
-    eigenstates) that the LLM may produce but that matrix_calculate alone does
-    not validate.
+    Catches wrong or non-normalized eigenvectors that a general matrix spectrum
+    calculation alone does not validate.
     """
     sp = _sympy()
     matrix = _parse_matrix(args.get("matrix"), sp)
@@ -486,24 +444,6 @@ def matrix_calculate(args: Mapping[str, Any]) -> Any:
     raise ValueError(f"不支持的矩阵操作：{operation}")
 
 
-def angular_momentum(args: Mapping[str, Any]) -> Any:
-    sp = _sympy()
-    from sympy.physics.wigner import clebsch_gordan, wigner_3j, wigner_6j
-
-    operation = str(args.get("operation", ""))
-    functions = {
-        "clebsch_gordan": clebsch_gordan,
-        "wigner_3j": wigner_3j,
-        "wigner_6j": wigner_6j,
-    }
-    if operation not in functions:
-        raise ValueError("未知角动量操作")
-    values = [_parse(item, sp) for item in args.get("values") or []]
-    if len(values) != 6:
-        raise ValueError("角动量操作需要 6 个参数")
-    return {"value": str(sp.simplify(functions[operation](*values)))}
-
-
 def dimension_check(args: Mapping[str, Any]) -> Any:
     sp = _sympy()
     import sympy.physics.units as units
@@ -570,27 +510,6 @@ def boundary_match(args: Mapping[str, Any]) -> Any:
             }
         )
     return {"checks": checks, "all_match": all(item["matches"] for item in checks)}
-
-
-def fock_ladder_expectation(args: Mapping[str, Any]) -> Any:
-    """精确计算 <n|(a+a†)^p|n>，不采用有限维截断。"""
-    sp = _sympy()
-    power = int(args.get("power", 0))
-    if power < 0 or power > 16:
-        raise ValueError("power 必须位于 0 到 16")
-    n = sp.Symbol("n", integer=True, nonnegative=True)
-    amplitudes: dict[int, Any] = {0: sp.Integer(1)}
-    for _ in range(power):
-        updated: dict[int, Any] = {}
-        for offset, coefficient in amplitudes.items():
-            occupation = n + offset
-            down = offset - 1
-            up = offset + 1
-            updated[down] = updated.get(down, 0) + coefficient * sp.sqrt(occupation)
-            updated[up] = updated.get(up, 0) + coefficient * sp.sqrt(occupation + 1)
-        amplitudes = updated
-    value = sp.expand(sp.simplify(amplitudes.get(0, 0)))
-    return {"expectation": str(value), "power": power, "state": "|n>"}
 
 
 def sympy_tools() -> tuple[Tool, ...]:
@@ -685,25 +604,6 @@ def sympy_tools() -> tuple[Tool, ...]:
             argument_validator=_validate_scalar_arguments,
         ),
         Tool(
-            "derive_boundary_equation",
-            "从两段分段波函数在边界点做 log-derivative 匹配，符号化推导匹配方程（自动消去振幅系数）；"
-            "用于核验由边界条件得出的超越方程，例如有限深势阱的 tan(ka) 方程。",
-            {
-                **object_schema,
-                "properties": {
-                    "left_expression": {"type": "string"},
-                    "right_expression": {"type": "string"},
-                    "variable": {"type": "string"},
-                    "point": {},
-                    "symbols": {"type": "array", "items": {"type": "string"}},
-                },
-                "required": ["left_expression", "right_expression", "point"],
-            },
-            derive_boundary_equation,
-            claim_kinds=("definition", "equation", "derivation", "condition", "conclusion"),
-            argument_validator=_validate_scalar_arguments,
-        ),
-        Tool(
             "matrix_calculate",
             "精确计算矩阵谱、乘积、对易子、反对易子、迹、行列式及厄米/幺正性；"
             "虚数单位 I 必须以字符串保留，不能改成数值 1。",
@@ -736,7 +636,7 @@ def sympy_tools() -> tuple[Tool, ...]:
         ),
         Tool(
             "matrix_eigenpair_check",
-            "确定性验证本征对：M·v=λ·v 且 ⟨v|v⟩=1。用于核验任何给定的本征值/本征矢断言（如泡利矩阵本征态），"
+            "确定性验证本征对：M·v=λ·v，并可检查向量归一化。"
             "返回 residual、eigenpair_valid、norm_squared、normalized。",
             {
                 **object_schema,
@@ -755,20 +655,6 @@ def sympy_tools() -> tuple[Tool, ...]:
             matrix_eigenpair_check,
             claim_kinds=("definition", "equation", "derivation", "condition", "conclusion"),
             argument_validator=_validate_scalar_arguments,
-        ),
-        Tool(
-            "angular_momentum",
-            "精确计算 Clebsch-Gordan、Wigner 3j 或 Wigner 6j 系数。",
-            {
-                **object_schema,
-                "properties": {
-                    "operation": {"enum": ["clebsch_gordan", "wigner_3j", "wigner_6j"]},
-                    "values": {"type": "array", "minItems": 6, "maxItems": 6},
-                },
-                "required": ["operation", "values"],
-            },
-            angular_momentum,
-            claim_kinds=("equation", "derivation", "conclusion"),
         ),
         Tool(
             "dimension_check",
@@ -802,16 +688,5 @@ def sympy_tools() -> tuple[Tool, ...]:
             },
             boundary_match,
             claim_kinds=("equation", "derivation", "condition"),
-        ),
-        Tool(
-            "fock_ladder_expectation",
-            "精确计算数态中的 <n|(a+a†)^p|n>，用于谐振子微扰与算符展开核验。",
-            {
-                **object_schema,
-                "properties": {"power": {"type": "integer", "minimum": 0, "maximum": 16}},
-                "required": ["power"],
-            },
-            fock_ladder_expectation,
-            claim_kinds=("equation", "derivation", "conclusion"),
         ),
     )

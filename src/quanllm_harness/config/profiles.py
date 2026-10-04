@@ -32,7 +32,7 @@ class HarnessSettings:
 
     api_key: str = ""
     base_url: str = field(default=QUANLLM_GATEWAY_URL, init=False)
-    model: str = "QuanLLM-v2.0-qm"
+    model: str = ""
     reasoning: StageProfile = field(default_factory=StageProfile)
     structured: StageProfile = field(
         default_factory=lambda: StageProfile(max_tokens=8_192, timeout_seconds=90.0)
@@ -58,7 +58,7 @@ class HarnessSettings:
         api_key = cls.read_api_key(api_key_path) if api_key_path.is_file() else ""
         values: dict[str, Any] = {
             "api_key": api_key,
-            "model": os.environ.get("QUANLLM_MODEL", "QuanLLM-v2.0-qm"),
+            "model": os.environ.get("QUANLLM_MODEL", ""),
             "run_directory": os.environ.get("QUANLLM_RUN_DIR", ""),
             "plugin_policy": load_plugin_policy(),
             "plugin_provider": os.environ.get("QUANLLM_PLUGIN_PROVIDER", ""),
@@ -84,8 +84,6 @@ class HarnessSettings:
         raise ValueError(f"API Key 文件为空：{path}")
 
     def validate(self) -> None:
-        if not self.model.strip():
-            raise ValueError("model 不能为空")
         self.reasoning.validate("reasoning")
         self.structured.validate("structured")
         if self.max_tool_rounds < 0 or self.max_repair_rounds < 0:

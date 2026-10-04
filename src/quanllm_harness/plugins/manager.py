@@ -11,21 +11,34 @@ from typing import Any
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
-from ..contracts import EventSink, HarnessEvent
+from ..contracts import EventSink, HarnessEvent, Issue
 from .api import (
     Cleanup,
+    DomainCandidateUpdate,
+    DomainFinalization,
+    DomainRepairInstruction,
+    DomainStrategy,
     EventSubscriber,
     PluginContext,
     PluginManifest,
     PluginPolicy,
     PluginStatus,
     PluginVerifier,
+    PromptContributor,
     ProviderFactory,
     SubprocessToolSpec,
 )
 from .runner import run_subprocess_tool
 
 EntryPointsFunction = Callable[[], Any]
+
+_BUNDLED_PLUGIN_ENTRY_POINTS = (
+    EntryPoint(
+        name="quanllm-qm-teaching",
+        value="quanllm_harness.official_plugins.qm_teaching:plugin",
+        group="quanllm_harness.plugins",
+    ),
+)
 
 
 @dataclass
@@ -38,6 +51,8 @@ class _LoadedPlugin:
     tool_names: list[str] = field(default_factory=list)
     verifier_names: list[str] = field(default_factory=list)
     provider_names: list[str] = field(default_factory=list)
+    domain_names: list[str] = field(default_factory=list)
+    prompt_names: list[str] = field(default_factory=list)
 
 
 class _PermissionedRegistrar:
@@ -108,6 +123,42 @@ class _ProviderRegistrar(_PermissionedRegistrar):
         self.plugin.provider_names.append(full_name)
 
 
+class _DomainRegistrar(_PermissionedRegistrar):
+    def register(self, name: str, strategy: DomainStrategy) -> None:
+        self.require()
+        full_name = self.manager._namespaced(self.plugin.manifest.name, name)
+        required = (
+            "matches",
+            "candidate_issues",
+            "fallback_answer",
+            "correct_candidate",
+            "repair_instructions",
+            "repair_hint",
+            "finalize",
+        )
+        missing = [item for item in required if not callable(getattr(strategy, item, None))]
+        if missing:
+            raise TypeError(f"领域策略 {full_name} 缺少方法：{missing}")
+        if any(existing == full_name for existing, _, _ in self.manager._domains):
+            raise ValueError(f"领域策略重复注册：{full_name}")
+        self.manager._domains.append((full_name, self.plugin.manifest.name, strategy))
+        self.plugin.domain_names.append(full_name)
+
+
+class _PromptRegistrar(_PermissionedRegistrar):
+    def register(self, name: str, contributor: PromptContributor) -> None:
+        self.require()
+        full_name = self.manager._namespaced(self.plugin.manifest.name, name)
+        if not callable(contributor):
+            raise TypeError("提示词贡献器必须可调用")
+        if any(existing == full_name for existing, _, _ in self.manager._prompt_contributors):
+            raise ValueError(f"提示词贡献器重复注册：{full_name}")
+        self.manager._prompt_contributors.append(
+            (full_name, self.plugin.manifest.name, contributor)
+        )
+        self.plugin.prompt_names.append(full_name)
+
+
 class _ServiceRegistrar(_PermissionedRegistrar):
     def provide(self, name: str, value: Any) -> None:
         if "services.provide" not in self.plugin.manifest.permissions:
@@ -145,12 +196,15 @@ class PluginManager:
         self.policy = policy or PluginPolicy()
         self.policy.validate()
         self._entry_points_function = entry_points_function
+        self._include_bundled_plugins = entry_points_function is entry_points
         self._plugins: dict[str, _LoadedPlugin] = {}
         self._statuses: dict[str, PluginStatus] = {}
         self._tools: dict[str, Any] = {}
         self._event_subscribers: list[tuple[str, EventSubscriber]] = []
         self._verifiers: list[tuple[str, str, PluginVerifier]] = []
         self._providers: dict[str, tuple[str, ProviderFactory]] = {}
+        self._domains: list[tuple[str, str, DomainStrategy]] = []
+        self._prompt_contributors: list[tuple[str, str, PromptContributor]] = []
         self._services: dict[str, Any] = {}
         self._diagnostics: list[str] = []
         self._started = False
@@ -185,9 +239,18 @@ class PluginManager:
     def _select(self, group: str) -> Sequence[EntryPoint]:
         discovered = self._entry_points_function()
         selector = getattr(discovered, "select", None)
-        if selector is not None:
-            return tuple(selector(group=group))
-        return tuple(discovered.get(group, ()))
+        selected = (
+            tuple(selector(group=group))
+            if selector is not None
+            else tuple(discovered.get(group, ()))
+        )
+        if group != "quanllm_harness.plugins" or not self._include_bundled_plugins:
+            return selected
+        names = {item.name for item in selected}
+        return (
+            *selected,
+            *(item for item in _BUNDLED_PLUGIN_ENTRY_POINTS if item.name not in names),
+        )
 
     @staticmethod
     def _distribution_digest(entrypoint: EntryPoint) -> str:
@@ -212,7 +275,7 @@ class PluginManager:
         try:
             return Version(version("quanllm-harness"))
         except Exception:
-            return Version("0.1.4")
+            return Version("0.1.5")
 
     def _enabled(self, name: str) -> tuple[bool, str]:
         if name in self.policy.disabled:
@@ -344,6 +407,8 @@ class PluginManager:
             events=_EventRegistrar(self, plugin, "events.subscribe"),
             verifiers=_VerifierRegistrar(self, plugin, "verifiers.register"),
             providers=_ProviderRegistrar(self, plugin, "providers.register"),
+            domains=_DomainRegistrar(self, plugin, "domains.register"),
+            prompts=_PromptRegistrar(self, plugin, "prompts.contribute"),
             services=_ServiceRegistrar(self, plugin, "services.provide"),
         )
 
@@ -425,6 +490,8 @@ class PluginManager:
                     tools=tuple(plugin.tool_names),
                     verifiers=tuple(plugin.verifier_names),
                     providers=tuple(plugin.provider_names),
+                    domains=tuple(plugin.domain_names),
+                    prompts=tuple(plugin.prompt_names),
                 )
             except Exception as exc:
                 self._remove_extensions(name)
@@ -503,6 +570,10 @@ class PluginManager:
         self._providers = {
             name: value for name, value in self._providers.items() if value[0] != plugin_name
         }
+        self._domains = [item for item in self._domains if item[1] != plugin_name]
+        self._prompt_contributors = [
+            item for item in self._prompt_contributors if item[1] != plugin_name
+        ]
         self._services = {
             name: value
             for name, value in self._services.items()
@@ -521,6 +592,123 @@ class PluginManager:
     @property
     def verifiers(self) -> Sequence[tuple[str, str, PluginVerifier]]:
         return tuple(self._verifiers)
+
+    def _matching_domains(self, question: str) -> tuple[tuple[str, str, DomainStrategy], ...]:
+        matched: list[tuple[str, str, DomainStrategy]] = []
+        for full_name, plugin_name, strategy in tuple(self._domains):
+            try:
+                if strategy.matches(question):
+                    matched.append((full_name, plugin_name, strategy))
+            except Exception as exc:
+                with self._lock:
+                    self._diagnostics.append(
+                        f"领域策略 {full_name} 匹配失败：{type(exc).__name__}: {exc}"
+                    )
+        return tuple(matched)
+
+    def domain_issues(self, question: str, candidate: str) -> tuple[Issue, ...]:
+        issues: list[Issue] = []
+        for full_name, _, strategy in self._matching_domains(question):
+            try:
+                found = tuple(strategy.candidate_issues(question, candidate))
+                if any(not isinstance(item, Issue) for item in found):
+                    raise TypeError("领域策略只能返回 Issue")
+                issues.extend(found)
+            except Exception as exc:
+                with self._lock:
+                    self._diagnostics.append(
+                        f"领域策略 {full_name} 候选核验失败：{type(exc).__name__}: {exc}"
+                    )
+        return tuple(issues)
+
+    def enrich_prompt(self, stage: str, user: str, base: str) -> str:
+        additions: list[str] = []
+        for full_name, _, contributor in tuple(self._prompt_contributors):
+            try:
+                addition = contributor(stage, user).strip()
+                if addition:
+                    additions.append(f"【插件提示：{full_name}】\n{addition}")
+            except Exception as exc:
+                with self._lock:
+                    self._diagnostics.append(
+                        f"提示词贡献器 {full_name} 失败：{type(exc).__name__}: {exc}"
+                    )
+        return base if not additions else base.rstrip() + "\n\n" + "\n\n".join(additions)
+
+    def domain_fallback(self, question: str) -> tuple[str, str]:
+        for full_name, _, strategy in self._matching_domains(question):
+            try:
+                candidate = strategy.fallback_answer(question).strip()
+            except Exception as exc:
+                with self._lock:
+                    self._diagnostics.append(
+                        f"领域策略 {full_name} 降级求解失败：{type(exc).__name__}: {exc}"
+                    )
+                continue
+            if candidate:
+                return candidate, full_name
+        return "", ""
+
+    def correct_domain_candidate(
+        self, question: str, candidate: str
+    ) -> tuple[str, tuple[str, ...]]:
+        notes: list[str] = []
+        current = candidate
+        for full_name, _, strategy in self._matching_domains(question):
+            try:
+                update = strategy.correct_candidate(question, current)
+                if not isinstance(update, DomainCandidateUpdate):
+                    raise TypeError("领域策略必须返回 DomainCandidateUpdate")
+                current = update.candidate
+                notes.extend(f"[{full_name}] {note}" for note in update.notes)
+            except Exception as exc:
+                with self._lock:
+                    self._diagnostics.append(
+                        f"领域策略 {full_name} 确定性修正失败：{type(exc).__name__}: {exc}"
+                    )
+        return current, tuple(notes)
+
+    def domain_repair_instructions(
+        self, question: str, candidate: str
+    ) -> tuple[tuple[DomainRepairInstruction, ...], str]:
+        instructions: list[DomainRepairInstruction] = []
+        hints: list[str] = []
+        for full_name, _, strategy in self._matching_domains(question):
+            try:
+                found = tuple(strategy.repair_instructions(question, candidate))
+                if any(not isinstance(item, DomainRepairInstruction) for item in found):
+                    raise TypeError("领域策略必须返回 DomainRepairInstruction")
+                instructions.extend(found)
+                hint = strategy.repair_hint(question).strip()
+                if hint:
+                    hints.append(f"[{full_name}] {hint}")
+            except Exception as exc:
+                with self._lock:
+                    self._diagnostics.append(
+                        f"领域策略 {full_name} 修复规划失败：{type(exc).__name__}: {exc}"
+                    )
+        return tuple(instructions), "\n".join(hints)
+
+    def finalize_domains(self, question: str, candidate: str) -> DomainFinalization:
+        current = candidate
+        issues: list[Issue] = []
+        warnings: list[str] = []
+        for full_name, _, strategy in self._matching_domains(question):
+            try:
+                result = strategy.finalize(question, current)
+                if not isinstance(result, DomainFinalization):
+                    raise TypeError("领域策略必须返回 DomainFinalization")
+                if any(not isinstance(item, Issue) for item in result.issues):
+                    raise TypeError("领域策略终结 issues 只能包含 Issue")
+                current = result.candidate
+                issues.extend(result.issues)
+                warnings.extend(f"[{full_name}] {warning}" for warning in result.warnings)
+            except Exception as exc:
+                with self._lock:
+                    self._diagnostics.append(
+                        f"领域策略 {full_name} 终结失败：{type(exc).__name__}: {exc}"
+                    )
+        return DomainFinalization(current, tuple(issues), tuple(warnings))
 
     def create_provider(self, name: str, settings: Any):
         if name not in self._providers:

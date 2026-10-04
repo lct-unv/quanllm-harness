@@ -1,5 +1,5 @@
 from quanllm_harness.contracts import IssueOrigin, Severity
-from quanllm_harness.verification.deterministic import (
+from quanllm_harness.official_plugins.qm_teaching.deterministic import (
     apply_deterministic_corrections,
     determinant_invariant_issues,
     deterministic_candidate_issues,
@@ -95,6 +95,21 @@ def test_wrong_inverse_is_rewritten_exactly_after_model_repairs_fail():
     assert matrix_relation_issues(question, corrected) == []
 
 
+def test_wrong_complex_projection_is_atomically_rewritten():
+    question = (
+        "In C^3 let u=(1,i,1)^T and v=(2,1-i,i)^T. "
+        "Construct the orthogonal projector and compute r."
+    )
+    candidate = "u^dagger v=3, Pv=u, and therefore r=3/7."
+
+    corrected, notes = apply_deterministic_corrections(question, candidate)
+
+    assert notes
+    assert r"r=\frac{1}{21}" in corrected
+    assert "r=3/7" not in corrected
+    assert projection_ratio_issues(question, corrected) == []
+
+
 def test_repeated_stale_inverse_is_rewritten_and_explicitly_invalidated():
     question = "C=[[3,2,1],[1,3,1],[2,2,3]]."
     wrong = "[[7,-1,-4],[-1,7,2],[-4,2,5]]"
@@ -149,6 +164,21 @@ def test_case_10_checks_intermediate_state_scaling():
 
     assert state_chain_issues(question, wrong)
     assert state_chain_issues(question, correct) == []
+
+
+def test_case_10_wrong_matrix_and_determinant_are_atomically_rewritten():
+    question = (
+        "Let U=(1/sqrt(2))*[[1,i],[i,1]], V=[[1,0],[0,i]], and "
+        "psi=(1/sqrt(2))*(1,1)^T. Compute W=VU and phi=VU psi."
+    )
+    candidate = "W=(1/sqrt(2))*[[1,i],[i,-1]]. phi=(1/2)*(1+i,i*(1+i))^T and det(W)=0."
+
+    corrected, notes = apply_deterministic_corrections(question, candidate)
+
+    assert notes
+    assert r"\det(W)=i=\det(V)\det(U)" in corrected
+    assert "det(W)=0" not in corrected
+    assert deterministic_candidate_issues(question, corrected) == []
 
 
 def test_case_10_rejects_invalid_factoring_of_final_complex_state():

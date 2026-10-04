@@ -14,7 +14,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from ..contracts import Issue, IssueOrigin, Severity, VerificationReport
+from ...contracts import Issue, IssueOrigin, Severity, VerificationReport
 
 
 @dataclass(frozen=True)

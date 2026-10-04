@@ -9,6 +9,9 @@ from quanllm_harness import CancellationToken, HarnessSettings, QuanLLMHarness, 
 from quanllm_harness.agents import AgentRuntime, HarnessAgents
 from quanllm_harness.cli import main
 from quanllm_harness.contracts import Claim, Evidence, ModelResponse, ToolCall, Usage
+from quanllm_harness.official_plugins.qm_teaching.sympy_tools import (
+    fock_ladder_expectation,
+)
 from quanllm_harness.orchestration import RunCancelled
 from quanllm_harness.protocols.claim_extraction import ClaimExtractionProtocol
 from quanllm_harness.provider import QuanLLMProvider
@@ -17,7 +20,6 @@ from quanllm_harness.tools import Tool, ToolRegistry, default_tool_registry
 from quanllm_harness.tools.sympy_backend import (
     boundary_match,
     dimension_check,
-    fock_ladder_expectation,
 )
 from quanllm_harness.verification import MathematicalVerifier, VerificationEngine
 
@@ -280,7 +282,7 @@ def test_capabilities_command_is_offline(capsys):
     assert main(["--capabilities"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert "symbolic_calculate" in payload
-    assert payload["quantum_backend_status"]["planner_visible"] is False
+    assert "quantum_backend_status" not in payload
 
 
 def test_execution_graph_command_is_offline(capsys):

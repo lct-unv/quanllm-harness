@@ -1,9 +1,18 @@
 from __future__ import annotations
 
 from collections import deque
+from types import SimpleNamespace
 
 from quanllm_harness import HarnessSettings, QuanLLMHarness, RunStatus
 from quanllm_harness.contracts import ModelResponse, Usage
+from quanllm_harness.official_plugins.qm_teaching import QuantumMechanicsTeachingPlugin
+from quanllm_harness.plugins import (
+    DomainCandidateUpdate,
+    DomainFinalization,
+    PluginManager,
+    PluginManifest,
+    PluginPolicy,
+)
 from quanllm_harness.provider import ProviderError, QuanLLMProvider
 from quanllm_harness.tools import ToolRegistry
 
@@ -28,6 +37,25 @@ class ScriptedProvider(QuanLLMProvider):
 
 def no_tools() -> ToolRegistry:
     return ToolRegistry()
+
+
+def qm_teaching_manager() -> PluginManager:
+    plugin = QuantumMechanicsTeachingPlugin()
+    entrypoint = SimpleNamespace(
+        name=plugin.manifest.name,
+        value="quanllm_harness.official_plugins.qm_teaching:plugin",
+        load=lambda: plugin,
+    )
+    return PluginManager.discover(
+        PluginPolicy(
+            enabled=(plugin.manifest.name,),
+            allowed_permissions=plugin.manifest.permissions,
+        ),
+        include_legacy_tools=False,
+        entry_points_function=lambda: SimpleNamespace(
+            select=lambda *, group: (entrypoint,) if group == "quanllm_harness.plugins" else ()
+        ),
+    )
 
 
 def test_single_solver_failure_falls_back_to_independent_solver():
@@ -385,8 +413,130 @@ def test_synthesis_regression_is_blocked_by_deterministic_invariant():
             parallel_solvers=False,
         ),
         tools=no_tools(),
+        plugin_manager=qm_teaching_manager(),
     ).answer(question)
 
     assert result.answer == correct
     assert result.status is RunStatus.VERIFIED
     assert any(event.kind == "synthesis_regression_blocked" for event in result.events)
+
+
+def test_domain_finalization_mutation_cannot_reuse_verified_status():
+    class FinalizingStrategy:
+        def matches(self, question):
+            return True
+
+        def candidate_issues(self, question, candidate):
+            return ()
+
+        def fallback_answer(self, question):
+            return ""
+
+        def correct_candidate(self, question, candidate):
+            return DomainCandidateUpdate(candidate)
+
+        def repair_instructions(self, question, candidate):
+            return ()
+
+        def repair_hint(self, question):
+            return ""
+
+        def finalize(self, question, candidate):
+            return DomainFinalization(candidate + " [domain finalization]")
+
+    class FinalizingPlugin:
+        manifest = PluginManifest(
+            name="finalizing-domain",
+            version="1.0.0",
+            permissions=("domains.register",),
+        )
+
+        def setup(self, context):
+            context.domains.register("test", FinalizingStrategy())
+
+    plugin = FinalizingPlugin()
+    entrypoint = SimpleNamespace(
+        name=plugin.manifest.name, value="test:plugin", load=lambda: plugin
+    )
+    manager = PluginManager.discover(
+        PluginPolicy(enabled=(plugin.manifest.name,)),
+        include_legacy_tools=False,
+        entry_points_function=lambda: SimpleNamespace(
+            select=lambda *, group: (entrypoint,) if group == "quanllm_harness.plugins" else ()
+        ),
+    )
+    provider = ScriptedProvider(
+        {
+            "任务路由": [
+                '{"depth":"standard","suspicious_input":false,"requires_tools":false,'
+                '"requires_independent_solver":false,"language":"zh","reason":"test"}'
+            ],
+            "主求解": ["verified candidate"],
+            "断言提取": ['{"claims":[],"requirements":[]}'],
+            "工具核验计划": ['{"checks":[],"not_checkable":[]}'],
+            "形式与学科核验": ['{"issues":[],"summary":"通过"}'],
+        }
+    )
+
+    result = QuanLLMHarness(
+        provider=provider,
+        settings=HarnessSettings(max_tool_rounds=0, semantic_verifier_count=1),
+        tools=no_tools(),
+        plugin_manager=manager,
+    ).answer("generic test")
+
+    assert result.answer.endswith("[domain finalization]")
+    assert result.status is RunStatus.DEGRADED_DELIVERY
+    assert any(event.kind == "domain_finalization_applied" for event in result.events)
+
+
+def test_plugin_verifier_failure_cannot_reuse_successful_semantic_status():
+    class BrokenVerifierPlugin:
+        manifest = PluginManifest(
+            name="broken-verifier",
+            version="1.0.0",
+            permissions=("verifiers.register",),
+        )
+
+        def setup(self, context):
+            def fail(_verification):
+                raise RuntimeError("deterministic gate unavailable")
+
+            context.verifiers.register("gate", fail)
+
+    plugin = BrokenVerifierPlugin()
+    entrypoint = SimpleNamespace(
+        name=plugin.manifest.name, value="test:plugin", load=lambda: plugin
+    )
+    manager = PluginManager.discover(
+        PluginPolicy(enabled=(plugin.manifest.name,)),
+        include_legacy_tools=False,
+        entry_points_function=lambda: SimpleNamespace(
+            select=lambda *, group: (entrypoint,) if group == "quanllm_harness.plugins" else ()
+        ),
+    )
+    provider = ScriptedProvider(
+        {
+            "任务路由": [
+                '{"depth":"standard","suspicious_input":false,"requires_tools":false,'
+                '"requires_independent_solver":false,"language":"zh","reason":"test"}'
+            ],
+            "主求解": ["candidate"],
+            "断言提取": ['{"claims":[],"requirements":[]}'],
+            "工具核验计划": ['{"checks":[],"not_checkable":[]}'],
+            "形式与学科核验": ['{"issues":[],"summary":"通过"}'],
+        }
+    )
+
+    result = QuanLLMHarness(
+        provider=provider,
+        settings=HarnessSettings(max_tool_rounds=0, semantic_verifier_count=1),
+        tools=no_tools(),
+        plugin_manager=manager,
+    ).answer("generic test")
+
+    assert result.status is RunStatus.DEGRADED_DELIVERY
+    assert result.verification.infrastructure_issues
+    assert any(
+        "deterministic gate unavailable" in item.problem for item in result.verification.issues
+    )

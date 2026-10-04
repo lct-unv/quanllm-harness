@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^\d+\.\d+\.\d+$')]
-    [string]$HarnessVersion = '0.1.2',
+    [string]$HarnessVersion = '0.1.5',
 
     [string]$PythonLauncher = 'py'
 )
@@ -130,7 +130,7 @@ try {
 
     Write-Host "Installing QuanLLM Harness $HarnessVersion..."
     Invoke-Python -Arguments @(
-        '-m', 'pip', 'install', "quanllm-harness==$HarnessVersion"
+        '-m', 'pip', 'install', "quanllm-harness[qm-teaching]==$HarnessVersion"
     ) -FailureMessage 'Failed to install QuanLLM Harness.'
 
     Write-Host 'Verifying the installation...'

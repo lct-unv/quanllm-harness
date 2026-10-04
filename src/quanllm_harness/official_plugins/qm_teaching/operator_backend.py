@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from .registry import Tool
+from ...tools.registry import Tool
 
 ALGEBRA_OPERATORS = {
     "canonical": frozenset({"x", "p"}),

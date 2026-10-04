@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import sympy as sp
 
-from ..contracts import Issue, IssueOrigin, Severity
+from ...contracts import Issue, IssueOrigin, Severity
 
 _MATRIX_RE = re.compile(
     r"\\begin\{(?P<kind>[pbvBV]?matrix)\}(?P<body>.*?)"
@@ -224,6 +224,11 @@ def _named_matrices(text: str, source: str) -> dict[str, _NamedMatrix]:
             factor = sp.Integer(1) if not factor_text else _parse_scalar(factor_text)
         except (TypeError, ValueError, SyntaxError, sp.SympifyError):
             continue
+        if not isinstance(factor, sp.Expr) or factor.is_commutative is not True:
+            # A preceding matrix product is not a scalar prefix for the next
+            # displayed matrix. Treating its parsed Python list as a factor
+            # caused the entire deterministic verifier to fail open.
+            continue
         name = _normalise_name(assignment.group("name"))
         named[name] = _NamedMatrix(name, parsed, factor * parsed.value, source)
     return named
@@ -236,8 +241,10 @@ def _matrix_latex(value: sp.Matrix) -> str:
 def matrix_relation_issues(question: str, candidate: str) -> list[Issue]:
     """Validate explicit named matrix products and resolved inverse contradictions."""
 
-    named = _named_matrices(question, "question")
-    named.update(_named_matrices(candidate, "candidate"))
+    named = _named_matrices(candidate, "candidate")
+    # Explicit source definitions are authoritative. Verification prose such as
+    # ``U^dagger U = I`` must not overwrite the original U with the displayed I.
+    named.update(_named_matrices(question, "question"))
     issues: list[Issue] = []
     combined = question + "\n" + candidate
     seen_relations: set[tuple[str, str, str]] = set()
@@ -758,9 +765,56 @@ def projector_matrix_issues(question: str, candidate: str) -> list[Issue]:
     ]
 
 
+def _unitary_chain_fallback_answer(question: str) -> str:
+    source = _named_matrices(question, "question")
+    psi_match = _PSI_RE.search(question)
+    relation = next(
+        (
+            item
+            for item in _PRODUCT_RELATION_RE.finditer(question)
+            if item.group("target") == "W"
+            and item.group("left") == "V"
+            and item.group("right") == "U"
+        ),
+        None,
+    )
+    if source.get("U") is None or source.get("V") is None or psi_match is None or relation is None:
+        return ""
+    try:
+        psi = _parse_scalar(psi_match.group("factor")) * sp.Matrix(
+            [_parse_scalar(cell) for cell in psi_match.group("body").split(",")]
+        )
+    except (TypeError, ValueError, SyntaxError, sp.SympifyError):
+        return ""
+    u = source["U"].value
+    v = source["V"].value
+    w = (v * u).applyfunc(sp.simplify)
+    upsi = (u * psi).applyfunc(sp.simplify)
+    phi = (w * psi).applyfunc(sp.simplify)
+    psi_norm = sp.simplify((sp.conjugate(psi).T * psi)[0])
+    phi_norm = sp.simplify((sp.conjugate(phi).T * phi)[0])
+    return (
+        f"1. $U^\\dagger U={sp.latex(sp.simplify(u.H * u))}=I$ and "
+        f"$V^\\dagger V={sp.latex(sp.simplify(v.H * v))}=I$, so both are unitary.\n"
+        f"2. Applying U then V gives $U\\psi={sp.latex(upsi)}$ and "
+        f"$\\phi=VU\\psi={sp.latex(phi)}$.\n"
+        f"3. Direct multiplication gives $W=VU={sp.latex(w)}$ and "
+        f"$W\\psi={sp.latex(phi)}$, agreeing with the sequential result.\n"
+        f"4. $\\|\\psi\\|^2={sp.latex(psi_norm)}$ and "
+        f"$\\|\\phi\\|^2={sp.latex(phi_norm)}$.\n"
+        f"5. $\\det(U)={sp.latex(sp.simplify(u.det()))}$, "
+        f"$\\det(V)={sp.latex(sp.simplify(v.det()))}$, and "
+        f"$\\det(W)={sp.latex(sp.simplify(w.det()))}="
+        f"\\det(V)\\det(U)$."
+    )
+
+
 def deterministic_fallback_answer(question: str) -> str:
     """Return an exact local answer for a narrowly recognized algebraic task."""
 
+    chain_answer = _unitary_chain_fallback_answer(question)
+    if chain_answer:
+        return chain_answer
     lowered_question = question.casefold()
     if not any(marker in lowered_question for marker in ("projection", "projector")):
         return ""
@@ -810,18 +864,36 @@ def _plain_matrix(value: sp.Matrix) -> str:
 def apply_deterministic_corrections(question: str, candidate: str) -> tuple[str, list[str]]:
     """Rewrite locally provable wrong matrices after model repair fails."""
 
+    # A wrong complex projection usually contaminates the inner product, the
+    # projected vector, both norms, and the final ratio together. Replacing only
+    # the last scalar would preserve a contradictory derivation, so use the
+    # exact local solver as one atomic correction.
+    if projection_ratio_issues(question, candidate):
+        fallback = deterministic_fallback_answer(question)
+        if fallback:
+            return fallback, ["已用复内积精确结果原子化重写投影计算"]
+
+    chain_fallback = _unitary_chain_fallback_answer(question)
+    if chain_fallback and (
+        matrix_transcription_issues(candidate)
+        or matrix_relation_issues(question, candidate)
+        or state_chain_issues(question, candidate)
+        or final_state_issues(question, candidate)
+        or determinant_invariant_issues(question, candidate)
+    ):
+        return chain_fallback, ["已用精确矩阵链原子化重写 VUpsi 计算"]
+
     replacements: list[tuple[int, int, str, str]] = []
     appendices: list[str] = []
     notes: list[str] = []
-    named = _named_matrices(question, "question")
     candidate_named = _named_matrices(candidate, "candidate")
-    named.update(candidate_named)
+    named = dict(candidate_named)
+    named.update(_named_matrices(question, "question"))
 
     spectral_issues = [
         *eigenvalue_spectrum_issues(question, candidate),
         *eigenvector_requirement_issues(question, candidate),
         *eigenvector_equation_issues(question, candidate),
-        *determinant_invariant_issues(question, candidate),
     ]
     if spectral_issues:
         source_matrices = _parsed_matrices(question)

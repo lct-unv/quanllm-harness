@@ -12,7 +12,6 @@ from ..contracts import (
 )
 from ..plugins import PluginVerificationContext, PluginVerificationResult
 from ..protocols.claim_extraction import ClaimExtractionProtocol
-from .deterministic import deterministic_candidate_issues
 from .mathematical import MathematicalVerifier
 from .semantic import SemanticVerifier
 from .structural import StructuralSnapshot
@@ -56,37 +55,14 @@ class VerificationEngine:
         # left to the semantic verifier so conceptual questions are not degraded
         # merely for lacking a tool call.
         supported_claims = {claim_id for ev in all_evidence if ev.ok for claim_id in ev.claim_ids}
-        ok_tools_by_claim: dict[str, set[str]] = {}
-        for ev in all_evidence:
-            if not ev.ok:
-                continue
-            for claim_id in ev.claim_ids:
-                ok_tools_by_claim.setdefault(claim_id, set()).add(ev.tool)
-        # Claims that are math (equation/derivation) OR that assert eigenvectors /
-        # eigenvalues / commutators must have a successful evidence from the
-        # *appropriate* tool; a weak pass (e.g. compare_expressions on a vector)
-        # does not count. This keeps wrong eigenvectors/commutators from passing.
-        eigen_markers = ("本征矢", "本征值", "本征态", "eigenvector", "eigenvalue")
-        comm_markers = ("对易子", "commutator", "[a,b]", "[a，b]", "[a,[a,")
+        # The core only enforces generic evidence coverage. Requiring a specific
+        # tool for a domain concept belongs to an enabled domain verifier.
         uncovered: list[str] = []
         for claim in claims:
-            quote = (claim.quote or "").casefold()
-            needs_tool = claim.kind in {"equation", "derivation"} or any(
-                marker in quote for marker in eigen_markers
-            )
+            needs_tool = claim.kind in {"equation", "derivation"}
             if not needs_tool or claim.id in not_checkable:
                 continue
             if claim.id not in supported_claims:
-                uncovered.append(claim.id)
-                continue
-            tools = ok_tools_by_claim.get(claim.id, set())
-            if any(marker in quote for marker in eigen_markers) and (
-                "matrix_eigenpair_check" not in tools
-            ):
-                uncovered.append(claim.id)
-            elif any(marker in quote for marker in comm_markers) and (
-                "operator_algebra" not in tools
-            ):
                 uncovered.append(claim.id)
         uncovered = sorted(set(uncovered))
         if uncovered:
@@ -109,7 +85,7 @@ class VerificationEngine:
             reference,
         )
         warnings.extend(semantic_warnings)
-        issue_list = [*deterministic_candidate_issues(question, candidate), *issues]
+        issue_list = list(issues)
         if self.runtime.plugin_manager:
             plugin_context = PluginVerificationContext(
                 question=question,
@@ -134,7 +110,18 @@ class VerificationEngine:
                     if plugin_result.summary:
                         summaries.append(f"[{plugin_name}] {plugin_result.summary}")
                 except Exception as exc:
-                    warnings.append(self._warning(f"插件核验器 {verifier_name}", exc))
+                    message = self._warning(f"插件核验器 {verifier_name}", exc)
+                    warnings.append(message)
+                    issue_list.append(
+                        Issue(
+                            origin=IssueOrigin.INFRASTRUCTURE,
+                            severity=Severity.MAJOR,
+                            quote="",
+                            problem=message,
+                            correction="修复或禁用失败的插件核验器后重新运行。",
+                            evidence_ids=(),
+                        )
+                    )
         final_issues = tuple(issue_list)
         if (
             warnings

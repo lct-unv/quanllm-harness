@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from quanllm_harness.tools import default_tool_registry
-from quanllm_harness.tools.operator_backend import operator_algebra
+from quanllm_harness.official_plugins.qm_teaching.operator_backend import (
+    operator_algebra,
+    operator_tools,
+)
+from quanllm_harness.tools import ToolRegistry, default_tool_registry
 
 
 def terms(*monomials: tuple[str, ...]) -> list[dict[str, object]]:
@@ -88,7 +91,8 @@ def test_operator_from_another_algebra_is_rejected():
 
 
 def test_schema_has_no_labels_or_generic_operator_kinds():
-    registry = default_tool_registry(include_plugins=False)
+    registry = ToolRegistry()
+    registry.register_many(operator_tools())
     schema = registry.tools["operator_algebra"].parameters
     serialized = str(schema)
     operator_enum = schema["properties"]["left_terms"]["items"]["properties"]["operators"]["items"][
@@ -99,9 +103,10 @@ def test_schema_has_no_labels_or_generic_operator_kinds():
     assert "momentum" not in operator_enum
 
 
-def test_operator_tool_is_available_in_default_registry():
+def test_operator_tool_is_owned_by_domain_plugin_not_default_registry():
     registry = default_tool_registry(include_plugins=False)
-    assert "operator_algebra" in registry.tools
+    assert "operator_algebra" not in registry.tools
+    registry.register_many(operator_tools())
     registry.validate_call(
         "operator_algebra",
         {

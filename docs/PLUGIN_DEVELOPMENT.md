@@ -9,6 +9,7 @@
 from quanllm_harness.plugins import PluginManifest
 from quanllm_harness.tools import Tool
 
+
 class ExamplePlugin:
     manifest = PluginManifest(
         name="example_plugin",
@@ -18,17 +19,20 @@ class ExamplePlugin:
     )
 
     def setup(self, context):
-        context.tools.register(Tool(
-            name="example_plugin.double",
-            description="Double one integer",
-            parameters={
-                "type": "object",
-                "properties": {"value": {"type": "integer"}},
-                "required": ["value"],
-                "additionalProperties": False,
-            },
-            handler=lambda args: {"value": args["value"] * 2},
-        ))
+        context.tools.register(
+            Tool(
+                name="example_plugin.double",
+                description="Double one integer",
+                parameters={
+                    "type": "object",
+                    "properties": {"value": {"type": "integer"}},
+                    "required": ["value"],
+                    "additionalProperties": False,
+                },
+                handler=lambda args: {"value": args["value"] * 2},
+            )
+        )
+
 
 plugin = ExamplePlugin()
 ```

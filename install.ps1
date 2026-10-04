@@ -3,6 +3,8 @@ param(
     [ValidatePattern('^\d+\.\d+\.\d+$')]
     [string]$HarnessVersion = '0.1.5',
 
+    [string]$HarnessSource = '',
+
     [string]$PythonLauncher = 'py'
 )
 
@@ -128,9 +130,14 @@ try {
         [System.Environment]::SetEnvironmentVariable('CL', $previousCl, 'Process')
     }
 
-    Write-Host "Installing QuanLLM Harness $HarnessVersion..."
+    $harnessRequirement = "quanllm-harness[qm-teaching]==$HarnessVersion"
+    if ($HarnessSource) {
+        $harnessRequirement = $HarnessSource
+    }
+
+    Write-Host "Installing QuanLLM Harness from $harnessRequirement..."
     Invoke-Python -Arguments @(
-        '-m', 'pip', 'install', "quanllm-harness[qm-teaching]==$HarnessVersion"
+        '-m', 'pip', 'install', $harnessRequirement
     ) -FailureMessage 'Failed to install QuanLLM Harness.'
 
     Write-Host 'Verifying the installation...'

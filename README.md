@@ -1,15 +1,15 @@
 # QuanLLM Harness
 
 [![CI](https://github.com/lct-unv/quanllm-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/lct-unv/quanllm-harness/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/pypi/pyversions/quanllm-harness.svg?release=0.1.4)](https://pypi.org/project/quanllm-harness/)
-[![PyPI](https://img.shields.io/badge/PyPI-v0.1.4-3775A9.svg)](https://pypi.org/project/quanllm-harness/)
+[![Python](https://img.shields.io/pypi/pyversions/quanllm-harness.svg?release=0.1.5)](https://pypi.org/project/quanllm-harness/)
+[![PyPI](https://img.shields.io/badge/PyPI-v0.1.5-3775A9.svg)](https://pypi.org/project/quanllm-harness/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 [中文](#中文) | [English](#english)
 
 ## 中文
 
-`quanllm-harness` 是 `QuanLLM-v2.0-qm` 的独立可靠性工程。它把模型调用、固定职责 Agent、量子工具、逐断言核验、定向修复、运行记录与一个轻量 CLI 从原 QuanLLM CLI 中分离出来。原 CLI 不会被本工程导入或修改。
+`quanllm-harness` 是一个领域无关、插件驱动的模型核验与恢复框架。核心负责固定职责 Agent、逐断言核验、定向修复、状态机和运行记录；模型 Provider、领域提示词、专用工具及确定性规则均可通过插件扩展。
 
 ```text
                      quanllm-harness
@@ -40,13 +40,20 @@
 
 ### 安装
 
-macOS 与 Linux 用户直接安装完整版：
+安装通用核心：
 
 ```bash
 python -m pip install quanllm-harness
 ```
 
-该命令同时安装 CLI、Web UI、REST API 与全部量子后端，不提供按后端选择的安装方式。由于 pycommute 包含 C++ 扩展，若当前平台没有可用的预编译包，安装时需要支持 C++17 的编译器。
+量子力学教学场景安装可选后端并启用随包发行的官方插件：
+
+```bash
+python -m pip install 'quanllm-harness[qm-teaching]'
+quanllm-harness plugins enable quanllm-qm-teaching
+```
+
+`pycommute` 包含 C++ 扩展；当前平台没有预编译包时需要支持 C++17 的编译器。
 
 Windows 上的官方 pycommute 1.0.0 源码包目前存在 MSVC 兼容问题。请保留 Visual Studio Build Tools 的“使用 C++ 的桌面开发”组件，并从本仓库根目录运行专用安装器：
 
@@ -65,8 +72,11 @@ nano APIKEY
 在 `APIKEY` 中只填写 Key 本身，不加引号、变量名或 `export`，保存后运行：
 
 ```bash
+export QUANLLM_MODEL=QuanLLM-v2.0-qm
 quanllm-harness '推导一维有限深势阱偶宇称束缚态方程'
 ```
+
+核心不预设模型；也可用每次调用的 `--model` 或 Provider 插件选择其它模型。
 
 从源码参与开发时才需要：
 
@@ -157,25 +167,25 @@ result = harness.answer("问题", cancellation=token)
 - `degraded_delivery`：仍交付答案，但协议、基础设施或收敛不满足“已核验”标准。
 - `failed_without_answer`：求解阶段未能产生可交付答案。
 
-### 默认量子后端
+### `quanllm-qm-teaching` 工具后端
 
-- SymPy：通用符号数学、矩阵、角动量系数，以及默认可用的结构化算符代数。
+- SymPy：通用符号数学与矩阵由核心提供；角动量、Fock 和结构化量子算符由插件提供。
 - pycommute：玻色、费米和自旋算符代数。
 - QuTiP：有限维量子态、密度矩阵和算符数值核验。
 - OpenFermion：费米/玻色产生湮灭算符的正规序、共轭、对易与反对易运算。
 
-普通安装会同时安装 Web/REST 服务及上述全部量子后端，不提供按后端选择的安装选项。`operator_algebra` 可精确核验一维正则位置—动量对、角动量、单模玻色和单模费米算符的对易子、反对易子、乘积与厄米共轭。它使用结构化算符树而非自然语言正则或可交换标量解析；内置工具遇到不同代数族或多模关系时会明确拒绝，并由专用后端处理，不会以有限维矩阵代替无限维证明。
+这些后端只在安装 `qm-teaching` extra 且启用插件后注册，并使用 `quanllm-qm-teaching.` 工具名前缀。`operator_algebra` 可精确核验一维正则位置—动量对、角动量、单模玻色和单模费米算符代数。
 
 Harness 还提供基于 mpmath 的高精度数值积分、局部求根与截断收敛检查。数值结果会携带精度或局限说明，不能冒充解析证明。
 
-若能力状态显示某个默认后端缺失，说明安装环境不完整，应重新安装发行包。SymPy 标量工具会在执行前拒绝 ket/bra 和抽象产生湮灭算符，避免把非交换量误当普通变量得到“看似成功”的错误证据。
+若插件能力状态显示后端缺失，请重新安装 `quanllm-harness[qm-teaching]`。插件关闭时，核心能力列表不会暴露任何量子专用工具或提示词。
 
 ### 集成式插件系统
 
 插件 API、管理器、安全策略、CLI 和 REST 状态接口全部位于
 `quanllm-harness` 主包内，不发布独立 SDK。新插件通过
 `quanllm_harness.plugins` Python entry-point 声明，可扩展 Tool、Verifier、Provider、
-Event 订阅与可注入 Service；旧 `quanllm_harness.tools` 入口仅作兼容保留。
+Domain Strategy、Prompt Contributor、Event 订阅与可注入 Service；旧 `quanllm_harness.tools` 入口仅作兼容保留。
 
 插件默认禁用，只有加入启用列表后才会导入：
 
@@ -185,6 +195,15 @@ quanllm-harness plugins enable my_plugin
 quanllm-harness plugins inspect my_plugin
 quanllm-harness plugins doctor
 ```
+
+首个官方领域插件是 `quanllm-qm-teaching`，它承载量子力学教学任务的确定性门禁、
+候选不回退评分、精确降级和教材标准结果回写：
+
+```bash
+quanllm-harness plugins enable quanllm-qm-teaching
+```
+
+通用核心默认不隐式激活领域策略；核心只保留预算、收敛、状态转换和最终交付裁决。
 
 主机会校验 API/主程序版本、声明权限、依赖顺序和可选 SHA-256 信任摘要。
 Tool 证据记录插件名、版本、摘要和执行模式。`subprocess` JSON 协议另外限制
@@ -203,8 +222,9 @@ src/quanllm_harness/
 ├── agents/          # 路由、双 Solver、综合、审核和修复职责
 ├── protocols/       # JSON、断言提取和判卷协议
 ├── orchestration/   # 执行图、取消/预算、收敛与主编排器
-├── tools/           # 注册表及 SymPy/数值/量子后端
+├── tools/           # 领域无关的注册表及 SymPy/数值后端
 ├── plugins/         # 集成式插件 API、策略、发现、生命周期与子进程协议
+├── official_plugins/ # 可显式启用的官方领域插件
 ├── verification/    # 结构、数学、语义与聚合核验
 ├── events/          # 线程安全事件流
 └── public_api.py
@@ -237,10 +257,10 @@ python -m twine check dist/*
 
 ## English
 
-`quanllm-harness` is an independent reliability system for `QuanLLM-v2.0-qm`. It separates model
-calls, fixed-role Agents, quantum tools, claim-level verification, targeted repair, run records,
-and a lightweight CLI from the original QuanLLM CLI. This project neither imports nor modifies
-the original CLI.
+`quanllm-harness` is a domain-neutral, plugin-driven model verification and recovery framework.
+The core owns fixed-role agents, claim-level verification, targeted repair, state transitions,
+and run records. Providers, domain prompts, specialized tools, and deterministic policies are
+plugin extensions.
 
 ```text
                      quanllm-harness
@@ -280,15 +300,22 @@ registry, event stream, and evidence space.
 
 ### Installation
 
-Install the complete package on macOS or Linux:
+Install the generic core:
 
 ```bash
 python -m pip install quanllm-harness
 ```
 
-This single command installs the CLI, Web UI, REST API, and every quantum backend. Backend-specific
-installation choices are not provided. Because pycommute contains a C++ extension, platforms
-without a compatible prebuilt wheel need a C++17-capable compiler.
+For quantum-mechanics teaching, install the optional backends and enable the bundled official
+plugin:
+
+```bash
+python -m pip install 'quanllm-harness[qm-teaching]'
+quanllm-harness plugins enable quanllm-qm-teaching
+```
+
+Because pycommute contains a C++ extension, platforms without a compatible prebuilt wheel need a
+C++17-capable compiler.
 
 The official pycommute 1.0.0 source archive currently has MSVC compatibility problems on Windows.
 Keep the **Desktop development with C++** workload from Visual Studio Build Tools installed, then
@@ -312,8 +339,12 @@ nano APIKEY
 Put only the Key itself in `APIKEY`, without quotes, a variable name, or `export`, then run:
 
 ```bash
+export QUANLLM_MODEL=QuanLLM-v2.0-qm
 quanllm-harness 'derive the even-parity bound-state equation for a one-dimensional finite well'
 ```
+
+The core has no implicit model default. Use `--model` per invocation or a provider plugin to select
+other models.
 
 Use an editable installation only when developing from source:
 
@@ -428,17 +459,18 @@ Result statuses:
   not meet the verified standard.
 - `failed_without_answer`: the solving stage produced no deliverable answer.
 
-### Default quantum backends
+### `quanllm-qm-teaching` backends
 
-- SymPy: general symbolic mathematics, matrices, angular-momentum coefficients, and the default
-  structured operator algebra.
+- SymPy: generic symbolic and matrix tools remain in core; angular-momentum, Fock, and structured
+  quantum-operator tools belong to the plugin.
 - pycommute: bosonic, fermionic, and spin operator algebra.
 - QuTiP: numerical checks for finite-dimensional quantum states, density matrices, and operators.
 - OpenFermion: normal ordering, conjugation, commutators, and anticommutators of fermionic and
   bosonic creation/annihilation operators.
 
-A normal installation includes the Web/REST service and every backend above, without per-backend
-extras. `operator_algebra` exactly verifies commutators, anticommutators, products, and Hermitian
+These backends are registered only after installing the `qm-teaching` extra and enabling the
+plugin, and their tool names use the `quanllm-qm-teaching.` prefix. `operator_algebra` verifies
+commutators, anticommutators, products, and Hermitian
 conjugates for a one-dimensional canonical position-momentum pair, angular momentum, a single
 bosonic mode, and a single fermionic mode. It uses structured operator trees instead of natural
 language regular expressions or commutative scalar parsing. Unsupported mixed-family and
@@ -449,17 +481,18 @@ The Harness also provides high-precision numerical integration, local root findi
 convergence checks through mpmath. Numerical results carry precision or limitation notes and are
 never presented as analytic proofs.
 
-If capability status reports a missing default backend, the installation is incomplete and the
-distribution should be reinstalled. SymPy scalar tools reject kets, bras, and abstract
-creation/annihilation operators before execution so that noncommuting quantities cannot be silently
-treated as ordinary variables.
+If plugin capability status reports a missing backend, reinstall
+`quanllm-harness[qm-teaching]`. With the plugin disabled, the core exposes no quantum-specific
+tools or prompt policy.
 
 ### Integrated plugin system
 
 The plugin API, manager, security policy, CLI, and REST status endpoint all ship inside the main
 `quanllm-harness` distribution; there is no separately published SDK. New plugins use the
-`quanllm_harness.plugins` entry-point group and can extend tools, verifiers, providers, events,
-and injectable services. The old `quanllm_harness.tools` group remains compatibility-only.
+`quanllm_harness.plugins` entry-point group and can extend tools, verifiers, providers, domain
+strategies, prompt contributors, events, and injectable services. The old
+`quanllm_harness.tools` group remains
+compatibility-only.
 
 Plugins are disabled by default and are not imported until explicitly enabled. The host validates
 API/host versions, permissions, dependency order, and optional trusted SHA-256 digests. Evidence
@@ -467,6 +500,17 @@ records plugin provenance. Subprocess tools receive time, output, and environmen
 protocol is not an OS sandbox. See [plugin development](docs/PLUGIN_DEVELOPMENT.md),
 [plugin security](docs/PLUGIN_SECURITY.md), and the
 [integrated example](examples/plugin_example.py).
+
+The first official domain plugin is `quanllm-qm-teaching`. It owns deterministic gates,
+candidate-regression scoring, exact fallbacks, and textbook-result backstops for quantum-mechanics
+teaching tasks:
+
+```bash
+quanllm-harness plugins enable quanllm-qm-teaching
+```
+
+The generic core does not silently activate domain policy. It retains repair budgets,
+convergence, state transitions, and final delivery authority.
 
 ### Project structure
 
@@ -479,8 +523,9 @@ src/quanllm_harness/
 ├── agents/          # routing, dual solvers, synthesis, review, and repair roles
 ├── protocols/       # JSON, claim extraction, and adjudication protocols
 ├── orchestration/   # execution graph, cancellation/budget, convergence, and orchestrator
-├── tools/           # registry plus SymPy, numerical, and quantum backends
+├── tools/           # domain-neutral registry plus SymPy and numerical backends
 ├── plugins/         # integrated API, policy, discovery, lifecycle, subprocess protocol
+├── official_plugins/ # explicitly enabled first-party domain plugins
 ├── verification/    # structural, mathematical, semantic, and aggregate verification
 ├── events/          # thread-safe event stream
 └── public_api.py

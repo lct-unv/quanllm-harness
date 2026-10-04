@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+## 0.1.5 - 2026-10-05
+
+- Split quantum-mechanics teaching behavior out of the generic core into the bundled, opt-in
+  `quanllm-qm-teaching` domain plugin. The core now owns orchestration and generic symbolic,
+  matrix, and numerical capabilities, while the plugin owns domain prompts, deterministic
+  verification, recovery policy, standard results, and quantum-specific tools.
+- Added prompt contributors and domain strategies to the stable plugin surface. Domain plugins can
+  now contribute stage-aware system-prompt fragments, candidate gates, bounded repair instructions,
+  deterministic fallbacks, atomic candidate rewrites, and delivery-time finalization without
+  taking ownership of the host status machine.
+- Bundled the official plugin in the Harness wheel but left it disabled by default. Source checkouts
+  and installed wheels discover it consistently, and explicit activation registers ten namespaced
+  tools plus its prompt, domain, and verifier extensions.
+- Moved QuTiP, pycommute, and OpenFermion to the `qm-teaching` optional dependency group so the
+  default installation remains domain-neutral. The supported Windows installer opts into that
+  extra explicitly.
+- Prevented plugin verifier failures from reusing a successful semantic status. Infrastructure
+  failures now force honest degraded delivery, while exact domain fallbacks can still preserve a
+  correct answer.
+- Added atomic recovery for coupled complex-projection and ordered unitary-chain results. A repair
+  replaces the complete dependent result set and re-verifies it, preventing candidate synthesis
+  from restoring invalidated matrices, states, norms, or determinants.
+- Re-ran all ten reasoning/recovery reproductions with the plugin active. Every delivered answer
+  passed the independent deterministic checks; Cases 6, 7, and 10 retained degraded telemetry for
+  real provider or tool timeouts instead of reporting false verification.
+
+### Contributor
+
+- Hxttt1 <3034557373@qq.com>
+- [lct-unv](https://github.com/lct-unv)
+
 ## 0.1.4 - 2026-10-04
 
 - Hardened the five-case reasoning/recovery path: structured claim extraction now salvages valid

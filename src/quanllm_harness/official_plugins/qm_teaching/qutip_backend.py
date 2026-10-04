@@ -4,8 +4,8 @@ from collections.abc import Mapping
 from importlib.util import find_spec
 from typing import Any
 
-from ._backend_availability import can_import
-from .registry import Tool
+from ...tools._backend_availability import can_import
+from ...tools.registry import Tool
 
 
 def qutip_state_check(args: Mapping[str, Any]) -> Any:

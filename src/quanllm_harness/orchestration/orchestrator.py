@@ -166,23 +166,22 @@ class QuanLLMHarness:
             return primary, independent, failures
 
         # Synthesis may not regress from a source candidate that satisfies more
-        # deterministic invariants.  This is a local release gate, independent
-        # of model prose or voting between candidates.
-        from ..verification.deterministic import deterministic_candidate_issues
+        # active domain invariants. The generic host owns the monotonicity rule;
+        # plugins own the domain-specific checks.
+        domain_issues = self.plugin_manager.domain_issues if self.plugin_manager else None
+        synthesized_issues = domain_issues(question, synthesized.answer) if domain_issues else ()
 
-        synthesized_issues = deterministic_candidate_issues(question, synthesized.answer)
-
-        def score(found: list[Issue]) -> int:
+        def score(found) -> int:
             return sum(10 if issue.severity is Severity.MAJOR else 1 for issue in found)
 
         source_scores = [
             (
-                score(deterministic_candidate_issues(question, primary.answer)),
+                score(domain_issues(question, primary.answer) if domain_issues else ()),
                 primary,
                 independent,
             ),
             (
-                score(deterministic_candidate_issues(question, independent.answer)),
+                score(domain_issues(question, independent.answer) if domain_issues else ()),
                 independent,
                 primary,
             ),
@@ -271,14 +270,15 @@ class QuanLLMHarness:
         except Exception as exc:
             infrastructure_errors.append(f"求解阶段失败：{type(exc).__name__}: {exc}")
             bus.emit("degraded", "求解", reason=infrastructure_errors[-1])
-            from ..verification.deterministic import deterministic_fallback_answer
-
-            candidate = deterministic_fallback_answer(question)
+            fallback_name = ""
+            if self.plugin_manager:
+                candidate, fallback_name = self.plugin_manager.domain_fallback(question)
             if candidate:
                 bus.emit(
-                    "deterministic_solver_fallback",
+                    "domain_solver_fallback",
                     "求解",
-                    reason="模型求解器均未返回，使用精确本地代数降级结果",
+                    strategy=fallback_name,
+                    reason="模型求解器均未返回，使用领域插件降级结果",
                 )
 
         convergence = ConvergencePolicy(
@@ -339,43 +339,21 @@ class QuanLLMHarness:
             candidate = repaired.answer
             repair_rounds += 1
 
-        if candidate:
-            from ..verification.deterministic import apply_deterministic_corrections
-
-            candidate, deterministic_notes = apply_deterministic_corrections(question, candidate)
-            if deterministic_notes:
-                infrastructure_errors.append("确定性回写：" + "；".join(deterministic_notes))
-                bus.emit(
-                    "deterministic_correction_applied",
-                    "确定性回写",
-                    corrections=deterministic_notes,
-                )
-
-        # Deterministic canonical-result compliance for curated textbook
-        # problems: first feed the canonical corrections back into one extra
-        # repair round so the model REWRITES the answer correctly, then apply the
-        # backstop so the delivered output is guaranteed correct. Any residual
-        # correction is recorded as an explicit issue/warning (honest degraded).
-        if candidate:
-            from ..tools.standard_results import (
-                PAULI_REPAIR_HINT,
-                apply_canonical,
-                canonical_corrections,
-            )
-
-            # Loop the canonical repair until every standard sub-result is present
-            # (bounded), so the delivered text itself is correct whenever possible.
-            canonical_hint = PAULI_REPAIR_HINT if "泡利" in (question or "") else ""
+        # Active domain plugins can request bounded model rewrites while the host
+        # retains the repair budget and final delivery authority.
+        if candidate and self.plugin_manager:
             max_extra = min(max(0, self.settings.max_repair_rounds - repair_rounds), 4)
             for _ in range(max_extra):
-                corrections = canonical_corrections(question, candidate)
-                if not corrections:
+                instructions, hint = self.plugin_manager.domain_repair_instructions(
+                    question, candidate
+                )
+                if not instructions:
                     break
                 bus.emit(
                     "repair_started",
-                    "标准结果修复",
+                    "领域结果修复",
                     round=repair_rounds + 1,
-                    issue_count=len(corrections),
+                    issue_count=len(instructions),
                 )
                 try:
                     repaired = RepairAgent(runtime).repair(
@@ -383,30 +361,55 @@ class QuanLLMHarness:
                         candidate,
                         [
                             {
-                                "quote": "",
-                                "problem": (
-                                    "标准结果核对：" + key + " 与标准结果不符，"
-                                    "请按修正值重写该部分并保持其它正确内容不变。"
-                                ),
-                                "correction": text,
-                                "evidence_ids": [],
+                                "quote": item.quote,
+                                "problem": item.problem,
+                                "correction": item.correction,
+                                "evidence_ids": list(item.evidence_ids),
                             }
-                            for key, text in corrections
+                            for item in instructions
                         ],
-                        hint=canonical_hint,
+                        hint=hint,
                     )
                 except Exception as exc:
-                    infrastructure_errors.append(f"标准结果修复失败：{type(exc).__name__}: {exc}")
+                    infrastructure_errors.append(f"领域结果修复失败：{type(exc).__name__}: {exc}")
                     break
                 candidate = repaired.answer
                 repair_rounds += 1
-            candidate, report, _canonical_corrected = apply_canonical(question, candidate, report)
+
+            # No model-written state may follow the deterministic correction.
+            # This ordering prevents a late repair from resurrecting an earlier,
+            # invalid candidate (the failure mode covered by recovery Case 10).
+            candidate, domain_notes = self.plugin_manager.correct_domain_candidate(
+                question, candidate
+            )
+            if domain_notes:
+                infrastructure_errors.append("领域确定性回写：" + "；".join(domain_notes))
+                bus.emit(
+                    "domain_correction_applied",
+                    "领域确定性回写",
+                    corrections=domain_notes,
+                )
+
+            finalized = self.plugin_manager.finalize_domains(question, candidate)
+            finalized_changed = finalized.candidate != candidate
+            candidate = finalized.candidate
+            if finalized_changed:
+                message = "领域插件在核验后修正了终稿；本次交付按降级结果处理"
+                infrastructure_errors.append(message)
+                bus.emit("domain_finalization_applied", "领域终结", reason=message)
+            if finalized.issues or finalized.warnings:
+                report = replace(
+                    report,
+                    issues=(*report.issues, *finalized.issues),
+                    protocol_warnings=(*report.protocol_warnings, *finalized.warnings),
+                )
 
         if not candidate:
             status = RunStatus.FAILED_WITHOUT_ANSWER
         elif (
             infrastructure_errors
             or report.model_issues
+            or report.infrastructure_issues
             or (report.protocol_warnings and not report.verifier_summaries)
         ):
             status = RunStatus.DEGRADED_DELIVERY

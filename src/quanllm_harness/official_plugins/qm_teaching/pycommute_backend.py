@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from ._backend_availability import can_import
-from .registry import Tool
+from ...tools._backend_availability import can_import
+from ...tools.registry import Tool
 
 
 def pycommute_algebra(args: Mapping[str, Any]) -> Any:

@@ -79,7 +79,7 @@ def create_app(
     app = FastAPI(
         title="QuanLLM Harness API",
         version=__version__,
-        description="Verified QuanLLM-v2.0 quantum-mechanics answer service",
+        description="Plugin-driven verified answer and recovery service",
     )
     static_root = Path(__file__).parents[1] / "web" / "static"
     index_html = (static_root / "index.html").read_text(encoding="utf-8")

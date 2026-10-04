@@ -6,12 +6,17 @@ from .orchestration import CancellationToken, ExecutionGraph
 from .orchestrator import QuanLLMHarness
 from .plugins import (
     PLUGIN_API_VERSION,
+    DomainCandidateUpdate,
+    DomainFinalization,
+    DomainRepairInstruction,
+    DomainStrategy,
     PluginContext,
     PluginManager,
     PluginManifest,
     PluginPolicy,
     PluginVerificationContext,
     PluginVerificationResult,
+    PromptContributor,
     SubprocessToolSpec,
 )
 from .provider import OpenAIQuanLLMProvider, QuanLLMProvider
@@ -20,7 +25,7 @@ from .public_api import create_harness
 try:
     __version__ = version("quanllm-harness")
 except PackageNotFoundError:
-    __version__ = "0.1.4"
+    __version__ = "0.1.5"
 
 __all__ = [
     "HarnessEvent",
@@ -35,11 +40,16 @@ __all__ = [
     "ExecutionGraph",
     "__version__",
     "PLUGIN_API_VERSION",
+    "DomainCandidateUpdate",
+    "DomainFinalization",
+    "DomainRepairInstruction",
+    "DomainStrategy",
     "PluginContext",
     "PluginManager",
     "PluginManifest",
     "PluginPolicy",
     "PluginVerificationContext",
     "PluginVerificationResult",
+    "PromptContributor",
     "SubprocessToolSpec",
 ]

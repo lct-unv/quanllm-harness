@@ -229,12 +229,10 @@ class ToolRegistry:
 
 def default_tool_registry(*, include_plugins: bool = True) -> ToolRegistry:
     from .numeric_backend import numeric_tools
-    from .operator_backend import operator_tools
-    from .quantum_backends import quantum_tools
     from .sympy_backend import sympy_tools
 
     registry = ToolRegistry()
-    for tool in (*sympy_tools(), *operator_tools(), *numeric_tools(), *quantum_tools()):
+    for tool in (*sympy_tools(), *numeric_tools()):
         registry.register(tool)
     if include_plugins:
         registry.load_entrypoint_tools()

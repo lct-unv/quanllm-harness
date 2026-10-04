@@ -1,15 +1,15 @@
-"""Compatibility module for quantum backends split into dedicated adapters."""
+"""Quantum backend adapters owned by the teaching domain plugin."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any
 
-from ._backend_availability import can_import
+from ...tools._backend_availability import can_import
+from ...tools.registry import Tool
 from .openfermion_backend import openfermion_algebra, openfermion_tools
 from .pycommute_backend import pycommute_algebra, pycommute_tools
 from .qutip_backend import qutip_state_check, qutip_tools
-from .registry import Tool
 
 
 def backend_status(_: Mapping[str, Any]) -> Any:
@@ -17,14 +17,14 @@ def backend_status(_: Mapping[str, Any]) -> Any:
         "qutip": can_import("qutip"),
         "pycommute": can_import("pycommute"),
         "openfermion": can_import("openfermion"),
-        "note": "三个量子后端均为默认依赖；false 表示当前安装环境不完整或无法导入。",
+        "note": "三个量子后端来自 qm-teaching 可选依赖；false 表示未安装或无法导入。",
     }
 
 
 def quantum_tools() -> tuple[Tool, ...]:
     status = Tool(
         "quantum_backend_status",
-        "报告默认量子后端是否完整可用。",
+        "报告 qm-teaching 可选量子后端是否可用。",
         {"type": "object", "properties": {}, "additionalProperties": False},
         backend_status,
         planner_visible=False,

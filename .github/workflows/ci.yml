@@ -52,4 +52,4 @@ jobs:
           python-version: "3.12"
       - name: Run the supported Windows installer
         shell: powershell
-        run: .\install.ps1 -PythonLauncher python
+        run: .\install.ps1 -PythonLauncher python -HarnessSource '.[qm-teaching]'

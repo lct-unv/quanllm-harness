@@ -28,7 +28,7 @@ class FakeClient:
 
 def test_v2_json_mode_forces_thinking_off():
     client = FakeClient()
-    provider = OpenAIQuanLLMProvider(HarnessSettings(), client=client)
+    provider = OpenAIQuanLLMProvider(HarnessSettings(model="test-model"), client=client)
     provider.complete([{"role": "user", "content": "x"}], stage="json", structured=True)
     provider.complete([{"role": "user", "content": "x"}], stage="reason", structured=False)
 

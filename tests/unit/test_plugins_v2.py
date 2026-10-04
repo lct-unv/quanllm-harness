@@ -7,6 +7,9 @@ from types import SimpleNamespace
 
 from quanllm_harness.config import HarnessSettings
 from quanllm_harness.contracts import HarnessEvent, ModelResponse
+from quanllm_harness.official_plugins.qm_teaching import (
+    QuantumMechanicsTeachingPlugin,
+)
 from quanllm_harness.plugins import (
     PluginManager,
     PluginManifest,
@@ -297,6 +300,50 @@ def test_verifier_and_provider_extensions_are_registered_but_cannot_mark_verifie
         manager.create_provider("extensions.alternate", HarnessSettings()), AlternateProvider
     )
     assert not hasattr(PluginVerificationResult(), "verified")
+
+
+def test_official_qm_teaching_plugin_owns_domain_verification_and_recovery():
+    plugin = QuantumMechanicsTeachingPlugin()
+    manager = PluginManager.discover(
+        _policy("quanllm-qm-teaching", permissions=plugin.manifest.permissions),
+        include_legacy_tools=False,
+        entry_points_function=_entrypoints(plugin),
+    )
+    question = (
+        "In C^3 let u=(1,i,1)^T and v=(2,1-i,i)^T. "
+        "Construct the orthogonal projector and compute r."
+    )
+
+    status = manager.statuses()[0]
+    assert status["state"] == "active"
+    assert status["domains"] == ["quanllm-qm-teaching.teaching"]
+    assert status["prompts"] == ["quanllm-qm-teaching.teaching"]
+    assert status["verifiers"] == ["quanllm-qm-teaching.deterministic"]
+    assert "quanllm-qm-teaching.operator_algebra" in status["tools"]
+    registry = manager.build_tool_registry()
+    assert "operator_algebra" not in registry.tools
+    assert "quanllm-qm-teaching.operator_algebra" in registry.tools
+    assert "quanllm-qm-teaching.quantum_backend_status" in registry.tools
+    enriched = manager.enrich_prompt("主求解", question, "generic prompt")
+    assert "generic prompt" in enriched
+    assert "量子力学教学领域策略" in enriched
+    assert manager.domain_issues(question, "The result is r=3/7.")
+    fallback, strategy = manager.domain_fallback(question)
+    assert strategy == "quanllm-qm-teaching.teaching"
+    assert r"r=\frac{1}{21}" in fallback
+
+
+def test_generic_plugin_manager_has_no_implicit_domain_policy():
+    manager = PluginManager.discover(
+        PluginPolicy(),
+        include_legacy_tools=False,
+        entry_points_function=_entrypoints(QuantumMechanicsTeachingPlugin()),
+    )
+
+    assert manager.statuses()[0]["state"] == "disabled"
+    assert manager.domain_issues("Compute a projector", "r=3/7") == ()
+    assert manager.domain_fallback("Compute a projector") == ("", "")
+    assert manager.enrich_prompt("主求解", "question", "generic prompt") == "generic prompt"
 
 
 def test_plugin_configuration_enable_disable_is_atomic(tmp_path):

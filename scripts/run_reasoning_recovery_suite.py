@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from time import monotonic
 
-from quanllm_harness import HarnessSettings, OpenAIQuanLLMProvider, QuanLLMHarness
+from quanllm_harness import HarnessSettings, PluginPolicy, create_harness
 
 CASES = {
     1: r"""Let
@@ -72,17 +73,17 @@ def main() -> int:
     parser.add_argument("--start", type=int, default=1)
     parser.add_argument("--end", type=int, default=10)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--model", default=os.environ.get("QUANLLM_MODEL", "QuanLLM-v2.0-qm"))
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     for case_id in range(args.start, args.end + 1):
         question = CASES[case_id]
         started = monotonic()
-        settings = HarnessSettings.from_api_key_file()
-        harness = QuanLLMHarness(
-            provider=OpenAIQuanLLMProvider(settings),
-            settings=settings,
+        settings = HarnessSettings.from_api_key_file(
+            model=args.model, plugin_policy=PluginPolicy(enabled=("quanllm-qm-teaching",))
         )
+        harness = create_harness(settings)
         try:
             result = harness.answer(question)
             payload = {

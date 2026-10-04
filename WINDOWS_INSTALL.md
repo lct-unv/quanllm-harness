@@ -6,7 +6,7 @@
 
 ### 为什么需要专用安装器
 
-QuanLLM Harness 默认包含 pycommute 量子算符后端。pycommute 1.0.0 在 PyPI 上目前只有源码包，且其上游源码有三处影响 Windows/MSVC 构建的问题：MSVC 需要显式更新 `__cplusplus`，一个比较器模板对 MSVC STL 不兼容，两个扩展模块使用了非 Windows 的路径式名称。
+`quanllm-qm-teaching` 可选插件能力包含 pycommute 量子算符后端。pycommute 1.0.0 在 PyPI 上目前只有源码包，且其上游源码有三处影响 Windows/MSVC 构建的问题：MSVC 需要显式更新 `__cplusplus`，一个比较器模板对 MSVC STL 不兼容，两个扩展模块使用了非 Windows 的路径式名称。
 
 `install.ps1` 保留官方 pycommute 发行内容，只在经过 SHA-256 校验的临时副本中应用最小兼容补丁。它不会修改 Python 安装目录中的源码，也不会永久修改 `CL` 环境变量。
 
@@ -55,7 +55,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 
 ### Why a dedicated installer is required
 
-QuanLLM Harness includes the pycommute quantum-operator backend by default. PyPI currently provides
+The optional `quanllm-qm-teaching` capabilities include the pycommute quantum-operator backend. PyPI currently provides
 pycommute 1.0.0 only as a source archive, and its upstream source has three Windows/MSVC build
 problems: MSVC needs an explicit updated `__cplusplus` value, one comparator template is
 incompatible with the MSVC standard library, and two extension modules use non-Windows path-style

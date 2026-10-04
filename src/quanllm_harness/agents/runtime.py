@@ -91,6 +91,11 @@ class AgentRuntime:
         validator: Callable[[dict[str, Any]], T] | None = None,
     ) -> dict[str, Any] | T:
         last_error: Exception | None = None
+        system = (
+            self.plugin_manager.enrich_prompt(stage, user, system)
+            if self.plugin_manager
+            else system
+        )
         feedback = ""
         for attempt in range(self.settings.protocol_retry_count + 1):
             try:
@@ -123,6 +128,8 @@ class AgentRuntime:
     ) -> T:
         """Run one structured request without protocol retries."""
 
+        if self.plugin_manager:
+            system = self.plugin_manager.enrich_prompt(stage, user, system)
         value, response = self.provider.complete_json(
             [
                 {"role": "system", "content": system},
@@ -143,6 +150,8 @@ class AgentRuntime:
         allow_tools: bool = True,
         require_tool: bool = False,
     ) -> Candidate:
+        if self.plugin_manager:
+            system = self.plugin_manager.enrich_prompt(stage, user, system)
         messages: list[Mapping[str, Any]] = [
             {"role": "system", "content": system},
             {"role": "user", "content": user},

@@ -91,10 +91,19 @@ class QuanLLMHarness:
         )
         self._checkpoint(controller, bus, "primary_solver")
         if not use_independent:
-            single_primary = SolverAgent(main_runtime).solve(
-                question, require_tool=policy.requires_tools
-            )
-            return single_primary, None, []
+            try:
+                single_primary = SolverAgent(main_runtime).solve(
+                    question, require_tool=policy.requires_tools
+                )
+                return single_primary, None, []
+            except Exception as exc:
+                failure = f"主求解失败：{type(exc).__name__}: {exc}"
+                bus.emit("solver_fallback", "独立求解", reason=failure)
+                self._checkpoint(controller, bus, "independent_solver_fallback")
+                fallback = IndependentSolverAgent(main_runtime).solve(
+                    question, require_tool=policy.requires_tools
+                )
+                return fallback, None, [failure]
 
         primary_runtime = self._runtime(bus)
         independent_runtime = self._runtime(bus)
@@ -149,7 +158,46 @@ class QuanLLMHarness:
         if independent is None:
             return primary, None, failures
         self._checkpoint(controller, bus, "synthesis")
-        synthesized = SynthesizerAgent(main_runtime).synthesize(question, primary, independent)
+        try:
+            synthesized = SynthesizerAgent(main_runtime).synthesize(question, primary, independent)
+        except Exception as exc:
+            failures.append(f"候选综合失败：{type(exc).__name__}: {exc}")
+            bus.emit("synthesis_fallback", "候选综合", reason=failures[-1])
+            return primary, independent, failures
+
+        # Synthesis may not regress from a source candidate that satisfies more
+        # deterministic invariants.  This is a local release gate, independent
+        # of model prose or voting between candidates.
+        from ..verification.deterministic import deterministic_candidate_issues
+
+        synthesized_issues = deterministic_candidate_issues(question, synthesized.answer)
+
+        def score(found: list[Issue]) -> int:
+            return sum(10 if issue.severity is Severity.MAJOR else 1 for issue in found)
+
+        source_scores = [
+            (
+                score(deterministic_candidate_issues(question, primary.answer)),
+                primary,
+                independent,
+            ),
+            (
+                score(deterministic_candidate_issues(question, independent.answer)),
+                independent,
+                primary,
+            ),
+        ]
+        best_score, best_source, other_source = min(source_scores, key=lambda item: item[0])
+        synthesized_score = score(synthesized_issues)
+        if synthesized_score > best_score:
+            bus.emit(
+                "synthesis_regression_blocked",
+                "候选综合",
+                synthesized_issue_score=synthesized_score,
+                fallback_issue_score=best_score,
+                problems=[issue.problem for issue in synthesized_issues],
+            )
+            return best_source, other_source, failures
         return synthesized, independent, failures
 
     def answer(
@@ -223,6 +271,15 @@ class QuanLLMHarness:
         except Exception as exc:
             infrastructure_errors.append(f"求解阶段失败：{type(exc).__name__}: {exc}")
             bus.emit("degraded", "求解", reason=infrastructure_errors[-1])
+            from ..verification.deterministic import deterministic_fallback_answer
+
+            candidate = deterministic_fallback_answer(question)
+            if candidate:
+                bus.emit(
+                    "deterministic_solver_fallback",
+                    "求解",
+                    reason="模型求解器均未返回，使用精确本地代数降级结果",
+                )
 
         convergence = ConvergencePolicy(
             self.settings.max_repair_rounds,
@@ -282,6 +339,18 @@ class QuanLLMHarness:
             candidate = repaired.answer
             repair_rounds += 1
 
+        if candidate:
+            from ..verification.deterministic import apply_deterministic_corrections
+
+            candidate, deterministic_notes = apply_deterministic_corrections(question, candidate)
+            if deterministic_notes:
+                infrastructure_errors.append("确定性回写：" + "；".join(deterministic_notes))
+                bus.emit(
+                    "deterministic_correction_applied",
+                    "确定性回写",
+                    corrections=deterministic_notes,
+                )
+
         # Deterministic canonical-result compliance for curated textbook
         # problems: first feed the canonical corrections back into one extra
         # repair round so the model REWRITES the answer correctly, then apply the
@@ -335,7 +404,11 @@ class QuanLLMHarness:
 
         if not candidate:
             status = RunStatus.FAILED_WITHOUT_ANSWER
-        elif infrastructure_errors or report.protocol_warnings or report.model_issues:
+        elif (
+            infrastructure_errors
+            or report.model_issues
+            or (report.protocol_warnings and not report.verifier_summaries)
+        ):
             status = RunStatus.DEGRADED_DELIVERY
         elif report.input_issues:
             status = RunStatus.VERIFIED_WITH_INPUT_AMBIGUITY

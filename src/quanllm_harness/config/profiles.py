@@ -38,6 +38,7 @@ class HarnessSettings:
         default_factory=lambda: StageProfile(max_tokens=8_192, timeout_seconds=90.0)
     )
     max_tool_rounds: int = 4
+    max_tool_failures_per_name: int = 2
     max_repair_rounds: int = 6
     duplicate_issue_limit: int = 2
     protocol_retry_count: int = 1
@@ -89,6 +90,8 @@ class HarnessSettings:
         self.structured.validate("structured")
         if self.max_tool_rounds < 0 or self.max_repair_rounds < 0:
             raise ValueError("轮数不能为负数")
+        if self.max_tool_failures_per_name <= 0:
+            raise ValueError("max_tool_failures_per_name 必须为正整数")
         if self.protocol_retry_count < 0 or self.duplicate_issue_limit < 0:
             raise ValueError("协议重试和重复问题阈值不能为负数")
         if self.semantic_verifier_count not in (1, 2):

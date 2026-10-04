@@ -33,7 +33,7 @@ class MathematicalVerifier:
             validated: list[tuple[str, str, dict[str, Any], str]] = []
             covered: set[str] = set()
             signatures: set[tuple[str, str]] = set()
-            for _index, check in enumerate(checks, 1):
+            for check in checks:
                 if not isinstance(check, dict):
                     continue
                 claim_id = str(check.get("claim_id") or "")
@@ -58,7 +58,7 @@ class MathematicalVerifier:
                     validated.append((claim_id, tool_name, arguments, purpose))
                     signatures.add(signature)
                 covered.add(claim_id)
-            for _index, item in enumerate(not_checkable, 1):
+            for item in not_checkable:
                 if not isinstance(item, dict):
                     continue
                 claim_id = str(item.get("claim_id") or "")

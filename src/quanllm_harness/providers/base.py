@@ -12,6 +12,17 @@ class ProviderError(RuntimeError):
     pass
 
 
+class InvalidToolArgumentsError(ProviderError):
+    """A malformed provider tool call that is safe to regenerate tool-free."""
+
+    def __init__(self, stage: str, tool: str, raw_arguments: str, parse_error: str):
+        super().__init__(f"{stage} 的工具 {tool or '<unknown>'} 参数不是合法 JSON")
+        self.stage = stage
+        self.tool = tool
+        self.raw_arguments = raw_arguments
+        self.parse_error = parse_error
+
+
 class QuanLLMProvider(ABC):
     @abstractmethod
     def complete(

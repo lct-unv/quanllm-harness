@@ -1,8 +1,8 @@
 # QuanLLM Harness
 
 [![CI](https://github.com/lct-unv/quanllm-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/lct-unv/quanllm-harness/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/pypi/pyversions/quanllm-harness.svg?release=0.1.3)](https://pypi.org/project/quanllm-harness/)
-[![PyPI](https://img.shields.io/badge/PyPI-v0.1.3-3775A9.svg)](https://pypi.org/project/quanllm-harness/)
+[![Python](https://img.shields.io/pypi/pyversions/quanllm-harness.svg?release=0.1.4)](https://pypi.org/project/quanllm-harness/)
+[![PyPI](https://img.shields.io/badge/PyPI-v0.1.4-3775A9.svg)](https://pypi.org/project/quanllm-harness/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 [中文](#中文) | [English](#english)
@@ -28,7 +28,8 @@
 - 简单题走单求解器，复杂题使用两个上下文隔离的独立求解器。
 - 每次工具调用执行前都经过一次语义忠实性审查；工具运行成功不自动等于断言已获支持。
 - 工具证据优先于模型意见；修订稿必须重新提取断言并重新核验。
-- 只有模型产生的问题清零才标记为 `verified`；基础设施或协议失败时仍尽量交付，但标记为 `degraded_delivery`。
+- 候选综合不得降低已验证状态：综合失败时回退到可交付的 Solver 候选，综合稿违反更多确定性不变量时禁止替换来源候选。
+- 只有模型产生的问题清零才标记为 `verified`；求解、基础设施或全部语义核验失败时标记为 `degraded_delivery`，已有其他语义核验通过时的可选检查点失败只记录告警。
 - 用户文本始终作为待处理数据传递给内部 Agent，不能覆盖内部协议。
 
 ### 运行要求
@@ -147,11 +148,11 @@ result = harness.answer("问题", cancellation=token)
 
 深题和高风险题默认让两个隔离 Solver 并行作答，再由综合 Agent 生成候选终稿。Solver 与逐断言工具计划产生的每个调用都会先由一次性审查 Agent 核对工具领域和参数忠实性，再进入确定性执行。此后系统执行形式/学科审核、要求/教学审核、逐问题独立裁决，以及有界定向修复和全量复核。
 
-审核 Agent 只提出问题，不拥有“放行权”。Python 编排器检查 JSON Schema、引文可定位性、证据 ID、问题来源、重复问题和收敛状态。所有问题即使被两个审核器同时报告，也必须经过恰好一次独立裁决；裁决协议失败只产生警告，不能触发答案重写。只有协议完整且模型产生的问题归零才返回 `verified`。
+审核 Agent 只提出问题，不拥有“放行权”。Python 编排器检查 JSON Schema、引文可定位性、证据 ID、问题来源、重复问题和收敛状态。所有问题即使被两个审核器同时报告，也必须经过恰好一次独立裁决；裁决协议失败只产生警告，不能触发答案重写。当至少一个语义核验成功、模型产生的问题归零且无关键基础设施失败时返回 `verified`；其他可选核验器的失败保留在 `protocol_warnings` 中。
 
 四种状态含义：
 
-- `verified`：完整核验通过。
+- `verified`：至少一个语义核验通过，且无模型问题或关键基础设施失败。
 - `verified_with_input_ambiguity`：只剩用户原始输入自身的歧义或损坏。
 - `degraded_delivery`：仍交付答案，但协议、基础设施或收敛不满足“已核验”标准。
 - `failed_without_answer`：求解阶段未能产生可交付答案。
@@ -262,8 +263,11 @@ registry, event stream, and evidence space.
 - Review domain fit and argument fidelity once before every tool call; successful execution alone
   does not mean that a claim is supported.
 - Prefer tool evidence over model opinion; extract and verify all claims again after every repair.
-- Return `verified` only after all model-generated issues are cleared. Infrastructure or protocol
-  failures still produce the best available answer under `degraded_delivery`.
+- Keep synthesis monotonic under deterministic checks: fall back to a deliverable Solver candidate
+  when synthesis fails, and reject a synthesis that violates stronger invariants than a source.
+- Return `verified` only after all model-generated issues are cleared. Solver, infrastructure, or
+  total semantic-verification failure produces `degraded_delivery`; an optional checkpoint failure
+  remains telemetry when another semantic pass succeeds.
 - Treat user text as data passed to internal Agents; it cannot override internal protocols.
 
 ### Requirements
@@ -411,12 +415,14 @@ Review Agents report issues but do not own a “release gate.” The Python orch
 Schema conformance, citation locatability, evidence IDs, issue provenance, duplicates, and
 convergence. Every issue receives exactly one independent adjudication even when both reviewers
 report it. An adjudication protocol failure produces a warning and cannot itself trigger a rewrite.
-The Harness returns `verified` only when the protocol is complete and no model-generated issue
-remains.
+The Harness returns `verified` when at least one semantic pass succeeds, no model-generated issue
+remains, and no critical infrastructure failure occurred. Failures from other optional verifiers
+remain visible in `protocol_warnings` without downgrading that successfully verified answer.
 
 Result statuses:
 
-- `verified`: complete verification passed.
+- `verified`: at least one semantic pass succeeded, with no model issue or critical infrastructure
+  failure.
 - `verified_with_input_ambiguity`: only ambiguity or damage originating in the user's input remains.
 - `degraded_delivery`: an answer is delivered, but protocol, infrastructure, or convergence did
   not meet the verified standard.

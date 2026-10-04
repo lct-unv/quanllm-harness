@@ -21,7 +21,7 @@ def parse_verifier_response(
     valid_evidence = {item.id for item in evidence}
     issues: list[Issue] = []
     skipped = 0
-    for _index, item in enumerate(raw_issues, 1):
+    for item in raw_issues:
         if not isinstance(item, dict):
             skipped += 1
             continue

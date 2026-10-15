@@ -21,6 +21,7 @@ from ..contracts import (
     RequestPolicy,
     RunStatus,
     Severity,
+    Usage,
     VerificationReport,
 )
 from ..events import EventBus
@@ -37,6 +38,8 @@ from .execution_graph import (
     RunCancelled,
     RunController,
 )
+from .lifecycle import Admission, CandidateLedger
+from .recovery import RecoveryTracker
 
 
 class QuanLLMHarness:
@@ -199,6 +202,86 @@ class QuanLLMHarness:
             return best_source, other_source, failures
         return synthesized, independent, failures
 
+    @staticmethod
+    def _admit_candidate(
+        ledger: CandidateLedger,
+        bus: EventBus,
+        source: str,
+        answer: str,
+        *,
+        round_index: int = 0,
+    ) -> Admission:
+        """Register a candidate and refuse text that was already invalidated."""
+
+        admission = ledger.admit(source, answer, round_index=round_index)
+        if admission.admitted and admission.record is not None:
+            bus.emit(
+                "candidate_admitted",
+                "候选生命周期",
+                candidate_id=admission.record.id,
+                source=source,
+                state=admission.record.state.value,
+                round=round_index,
+            )
+            return admission
+        bus.emit(
+            "invalid_state_blocked",
+            "候选生命周期",
+            source=source,
+            reason=admission.reason,
+            leakage=ledger.invalid_state_leakage,
+        )
+        return admission
+
+    @staticmethod
+    def _record_verification(
+        ledger: CandidateLedger,
+        tracker: RecoveryTracker,
+        bus: EventBus,
+        candidate_id: str,
+        report: VerificationReport,
+        *,
+        usage: Usage | None = None,
+    ) -> None:
+        if not candidate_id:
+            return
+        if report.model_issues:
+            timeline = report.assertion_timeline
+            recorded = ledger.record(candidate_id)
+            tracker.note_detection(
+                "tool_contradiction" if timeline.contradicted else "model_issue",
+                round_index=recorded.round if recorded else 0,
+                usage=usage,
+            )
+            target = timeline.rollback_target
+            if target is not None:
+                tracker.note_localization(
+                    target.claim_id,
+                    source="assertion_timeline",
+                    rollback_distance=target.rollback_distance,
+                )
+            record = ledger.mark_invalid(
+                candidate_id,
+                reason="核验发现模型问题",
+                issue_fingerprints=[issue.fingerprint for issue in report.model_issues],
+            )
+            bus.emit(
+                "candidate_invalidated",
+                "候选生命周期",
+                candidate_id=record.id,
+                round=record.round,
+                issues=[issue.problem for issue in report.model_issues],
+            )
+            return
+        tracker.note_verified()
+        record = ledger.mark_verified(candidate_id, reason="核验未发现模型问题")
+        bus.emit(
+            "candidate_verified",
+            "候选生命周期",
+            candidate_id=record.id,
+            round=record.round,
+        )
+
     def answer(
         self,
         question: str,
@@ -238,6 +321,8 @@ class QuanLLMHarness:
             graph=self.graph.describe(),
         )
         infrastructure_errors: list[str] = []
+        ledger = CandidateLedger()
+        tracker = RecoveryTracker()
 
         try:
             self._checkpoint(controller, bus, "route")
@@ -258,6 +343,7 @@ class QuanLLMHarness:
         reference = ""
         report = VerificationReport()
         repair_rounds = 0
+        current_id = ""
         try:
             selected, independent, solver_failures = self._solve_candidates(
                 question, policy, runtime, bus, controller
@@ -265,6 +351,11 @@ class QuanLLMHarness:
             candidate = selected.answer
             reference = independent.answer if independent else ""
             infrastructure_errors.extend(solver_failures)
+            if candidate:
+                admission = self._admit_candidate(ledger, bus, f"求解·{selected.source}", candidate)
+                current_id = admission.record.id if admission.record else ""
+            if independent is not None and independent.answer:
+                self._admit_candidate(ledger, bus, f"求解·{independent.source}", independent.answer)
         except RunCancelled:
             raise
         except Exception as exc:
@@ -280,6 +371,8 @@ class QuanLLMHarness:
                     strategy=fallback_name,
                     reason="模型求解器均未返回，使用领域插件降级结果",
                 )
+                admission = self._admit_candidate(ledger, bus, "领域降级求解", candidate)
+                current_id = admission.record.id if admission.record else ""
 
         convergence = ConvergencePolicy(
             self.settings.max_repair_rounds,
@@ -301,6 +394,7 @@ class QuanLLMHarness:
                     protocol_warnings=(message,),
                 )
                 break
+            self._record_verification(ledger, tracker, bus, current_id, report, usage=runtime.usage)
             decision = convergence.evaluate(
                 report.model_issues,
                 completed_repair_rounds=repair_rounds,
@@ -336,7 +430,19 @@ class QuanLLMHarness:
             except Exception as exc:
                 infrastructure_errors.append(f"修复失败：{type(exc).__name__}: {exc}")
                 break
+            admission = self._admit_candidate(
+                ledger, bus, "定向修复", repaired.answer, round_index=repair_rounds + 1
+            )
+            if not admission.admitted:
+                fallback = ledger.verified_answer()
+                if fallback:
+                    candidate = fallback
+                    infrastructure_errors.append("修复输出命中已失效候选，交付最近一次已核验状态")
+                else:
+                    infrastructure_errors.append("修复输出命中已失效候选，且没有可回退的已核验状态")
+                break
             candidate = repaired.answer
+            current_id = admission.record.id if admission.record else ""
             repair_rounds += 1
 
         # Active domain plugins can request bounded model rewrites while the host
@@ -373,15 +479,33 @@ class QuanLLMHarness:
                 except Exception as exc:
                     infrastructure_errors.append(f"领域结果修复失败：{type(exc).__name__}: {exc}")
                     break
+                admission = self._admit_candidate(
+                    ledger, bus, "领域结果修复", repaired.answer, round_index=repair_rounds + 1
+                )
+                if not admission.admitted:
+                    infrastructure_errors.append("领域结果修复命中已失效候选，保留当前已核验状态")
+                    break
                 candidate = repaired.answer
+                current_id = admission.record.id if admission.record else ""
                 repair_rounds += 1
 
             # No model-written state may follow the deterministic correction.
             # This ordering prevents a late repair from resurrecting an earlier,
             # invalid candidate (the failure mode covered by recovery Case 10).
-            candidate, domain_notes = self.plugin_manager.correct_domain_candidate(
+            corrected, domain_notes = self.plugin_manager.correct_domain_candidate(
                 question, candidate
             )
+            if corrected != candidate:
+                admission = self._admit_candidate(
+                    ledger, bus, "领域确定性回写", corrected, round_index=repair_rounds
+                )
+                if admission.admitted:
+                    candidate = corrected
+                    current_id = admission.record.id if admission.record else current_id
+                else:
+                    domain_notes = tuple(domain_notes) + (
+                        "领域确定性回写命中已失效候选，已拒绝该回写",
+                    )
             if domain_notes:
                 infrastructure_errors.append("领域确定性回写：" + "；".join(domain_notes))
                 bus.emit(
@@ -392,7 +516,16 @@ class QuanLLMHarness:
 
             finalized = self.plugin_manager.finalize_domains(question, candidate)
             finalized_changed = finalized.candidate != candidate
-            candidate = finalized.candidate
+            if finalized_changed:
+                admission = self._admit_candidate(
+                    ledger, bus, "领域终结", finalized.candidate, round_index=repair_rounds
+                )
+                if admission.admitted:
+                    candidate = finalized.candidate
+                    current_id = admission.record.id if admission.record else current_id
+                else:
+                    finalized_changed = False
+                    infrastructure_errors.append("领域终结修正命中已失效候选，已拒绝该修正")
             if finalized_changed:
                 message = "领域插件在核验后修正了终稿；本次交付按降级结果处理"
                 infrastructure_errors.append(message)
@@ -404,6 +537,11 @@ class QuanLLMHarness:
                     protocol_warnings=(*report.protocol_warnings, *finalized.warnings),
                 )
 
+        guarded, guard_reason = ledger.delivery_guard(candidate)
+        if guard_reason:
+            candidate = guarded
+            infrastructure_errors.append(guard_reason)
+            bus.emit("delivery_guard_applied", "候选生命周期", reason=guard_reason)
         if not candidate:
             status = RunStatus.FAILED_WITHOUT_ANSWER
         elif (
@@ -434,6 +572,28 @@ class QuanLLMHarness:
                     dict.fromkeys((*report.protocol_warnings, *infrastructure_errors))
                 ),
             )
+        recovery = tracker.finish(
+            usage=runtime.usage,
+            status=status.value,
+            repair_iterations=repair_rounds,
+            invalid_state_leakage=ledger.invalid_state_leakage,
+            notes=tuple(dict.fromkeys(infrastructure_errors)),
+        )
+        bus.emit(
+            "recovery_metrics",
+            "Harness",
+            detected=recovery.detected,
+            detected_kinds=list(recovery.detected_kinds),
+            localized=recovery.localized,
+            localized_claim_id=recovery.localized_claim_id,
+            localization_source=recovery.localization_source,
+            rollback_distance=recovery.rollback_distance,
+            repair_iterations=recovery.repair_iterations,
+            verified_rounds=recovery.verified_rounds,
+            recovered=recovery.recovered,
+            invalid_state_leakage=recovery.invalid_state_leakage,
+            detection_latency_seconds=recovery.detection_latency_seconds,
+        )
         bus.emit(
             "run_finished",
             "Harness",
@@ -449,6 +609,8 @@ class QuanLLMHarness:
             events=tuple(bus.events),
             usage=runtime.usage,
             repair_rounds=repair_rounds,
+            lifecycle=ledger.snapshot(),
+            recovery=recovery,
         )
         if self.settings.run_directory:
             try:

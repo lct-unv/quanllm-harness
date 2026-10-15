@@ -181,6 +181,16 @@ def _render_result(result: HarnessResult, *, as_json: bool) -> int:
             f" ｜ 输入 {result.usage.prompt_tokens} Token"
             f" ｜ 输出 {result.usage.completion_tokens} Token"
         )
+        metrics = result.recovery
+        if metrics.detected:
+            localized = metrics.localized_claim_id or "未定位"
+            print(
+                f"恢复：检测 {metrics.detected_round + 1} 轮 ｜ 定位 {localized}"
+                f" ｜ 回滚距离 {metrics.rollback_distance}"
+                f" ｜ 修复 {metrics.repair_iterations} 轮"
+                f" ｜ 恢复成功 {'是' if metrics.recovered else '否'}"
+                f" ｜ 失效状态泄漏 {metrics.invalid_state_leakage}"
+            )
         if result.record_path:
             print(f"运行记录：{result.record_path}")
     if result.status in {RunStatus.VERIFIED, RunStatus.VERIFIED_WITH_INPUT_AMBIGUITY}:

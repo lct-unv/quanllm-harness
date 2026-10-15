@@ -38,7 +38,9 @@ Each stage has both a transport read timeout and a streaming wall-clock deadline
 
 ## Evidence model
 
-Every tool invocation produces an immutable `Evidence` record with its exact arguments, result, limitations and stable ID. Evidence also records linked claim IDs, whether a one-shot semantic preflight verified input fidelity, and whether a comparison-style result explicitly supports or contradicts the claim. `ok` means only that the Python handler completed. A failed tool invocation is never evidence that a claim is true.
+Every tool invocation produces an immutable `Evidence` record with its exact arguments, result, limitations and stable ID. Evidence also records linked claim IDs, the candidate digest it was collected for, whether a one-shot semantic preflight verified input fidelity, and whether a comparison-style result explicitly supports or contradicts the claim. `ok` means only that the Python handler completed. A failed tool invocation is never evidence that a claim is true.
+
+Evidence is scoped to the candidate digest: claim IDs are re-issued per candidate, so matching by ID alone would let an earlier round's contradiction or support leak into a repaired answer. Before a call is executed, Python pre-validates the tool name, JSON Schema, claim kind and backend constraints; structurally invalid calls are recorded with `error_kind=schema` and never spend a semantic-review request. Handler failures are retried under a bounded per-tool policy, an optional `fallback` handler is recorded with `fallback_used=true`, and a result that is not JSON-portable is rejected as an evidence failure. None of these outcomes can support a claim.
 
 Core backends:
 
@@ -66,7 +68,7 @@ Discovery first applies the host enable/disable policy by entry-point name. Disa
 plugins are reported without importing their Python module. Enabled plugins then pass distribution
 digest, API version, harness version, permission, dependency, and manifest validation. Dependencies
 start in topological order and stop in reverse order. A plugin receives only permission-gated
-registrars for Tool, Verifier, Provider, Domain Strategy, Prompt Contributor, Event, and Service extensions;
+registrars for Tool, Verifier, Provider, Domain Strategy, Invariant, Prompt Contributor, Event, and Service extensions;
 cross-plugin services also require an explicit dependency.
 
 In-process plugins are trusted Python and can return a cleanup callback. Subprocess Tool plugins
@@ -79,6 +81,12 @@ can safely continue.
 
 Domain strategies may report deterministic candidate issues, supply an exact fallback when model
 solvers return no answer, request bounded host-controlled repairs, and apply a delivery backstop.
+Registered invariants are deterministic predicates the host runs on every verification pass; they
+receive an `InvariantContext` (question, candidate, claims, requirements, evidence) and return an
+explicit checked count plus issues. Invariants are evidence-driven on purpose: they only judge
+matrices or probability vectors that a reviewed tool call declared, so an intermediate product can
+never be mistaken for the object under test. A failing invariant is reported as an infrastructure
+failure instead of silently passing.
 They cannot change repair budgets, convergence decisions, run status, or mark an answer verified.
 The first-party `quanllm-qm-teaching` plugin owns quantum-teaching prompts, tools, optional backend
 adapters, deterministic gates, and canonical rules. It ships in the main wheel but remains disabled
@@ -102,6 +110,29 @@ A repaired answer goes through claim extraction and verification again. A run is
 If a provider, protocol, tool or convergence check fails after an answer exists, the answer may still be returned as `degraded_delivery`; it must not be presented as verified. If no answer exists, the status is `failed_without_answer`.
 
 The repair loop is bounded by both a maximum round count and a duplicate-finding threshold. Every repaired answer is treated as a new candidate: claims are extracted again, tool plans are rebuilt and both verifier passes run again. A previous pass cannot certify changed text.
+
+A math claim that never received successful tool evidence produces an infrastructure issue rather
+than a warning-only run: the answer is still delivered, but such a run cannot report `verified`.
+
+## Recovery control and observability
+
+Every candidate -- solver, synthesis, repair or domain rewrite -- is registered in a
+`CandidateLedger` with an explicit state (`proposed`, `verified`, `invalid`, `archived`) and an
+append-only transition history. Invalidated text is tombstoned by content digest, so a later repair,
+synthesis or domain rewrite cannot resurrect it. Blocked write-backs increment the
+invalid-state-leakage counter and fall back to the most recent verified checkpoint when one exists.
+Only candidates that reached `verified` (no model-origin issue) may be delivered or enter final
+generation. A tool or infrastructure failure never changes that state.
+
+Claims are linearized into an `AssertionTimeline` in candidate reading order. When tool evidence
+contradicts a claim, Python -- not a model -- produces the finding, names the earliest incorrect
+step, and lists the downstream assertions that must be recomputed. These findings are never
+adjudicated away and are listed before model-reported issues so repair targets the root cause.
+
+`RecoveryMetrics` is attached to every result and run record: detection kind and latency, localized
+claim and localization source, rollback distance, repair iterations, verified rounds, recovery token
+cost, invalid-state leakage and recovery success. A first-pass correct answer is deliberately not
+counted as a recovery because no recovery path was exercised.
 
 `ConvergencePolicy` owns recurrence counts and stop decisions. The orchestrator consumes only its `PASS`, `REPAIR` or `STOP` decision, allowing policy tests and future replacement without changing Agent code.
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from quanllm_harness.contracts import (
     HarnessEvent,
     HarnessResult,
+    RecoveryMetrics,
     RequestPolicy,
     RunStatus,
     Usage,
@@ -63,3 +64,43 @@ def test_terminal_process_lines_include_live_elapsed_time(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "[00小时00分钟01秒] [主求解]" in output
     assert "[00小时01分钟02秒] [工具 operator_algebra：成功]" in output
+
+
+def test_cli_prints_recovery_summary_only_when_an_anomaly_was_detected(capsys):
+    verified = HarnessResult(
+        status=RunStatus.VERIFIED,
+        answer="答案",
+        policy=RequestPolicy(),
+        verification=VerificationReport(),
+        events=(),
+        usage=Usage(1, 1),
+    )
+    assert cli_app._render_result(verified, as_json=False) == 0
+    assert "恢复：" not in capsys.readouterr().out
+
+    recovered = HarnessResult(
+        status=RunStatus.VERIFIED,
+        answer="答案",
+        policy=RequestPolicy(),
+        verification=VerificationReport(),
+        events=(),
+        usage=Usage(1, 1),
+        repair_rounds=1,
+        recovery=RecoveryMetrics(
+            detected=True,
+            detected_kinds=("tool_contradiction",),
+            localized=True,
+            localized_claim_id="C-002",
+            localization_source="assertion_timeline",
+            rollback_distance=3,
+            repair_iterations=1,
+            verified_rounds=1,
+            recovered=True,
+            delivery_status="verified",
+        ),
+    )
+    assert cli_app._render_result(recovered, as_json=False) == 0
+    output = capsys.readouterr().out
+    assert "恢复：检测 1 轮 ｜ 定位 C-002 ｜ 回滚距离 3 ｜ 修复 1 轮" in output
+    assert "恢复成功 是" in output
+    assert "失效状态泄漏 0" in output

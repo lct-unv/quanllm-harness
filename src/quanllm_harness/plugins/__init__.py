@@ -6,6 +6,10 @@ from .api import (
     DomainRepairInstruction,
     DomainStrategy,
     HarnessPlugin,
+    Invariant,
+    InvariantContext,
+    InvariantFinding,
+    InvariantResult,
     PluginContext,
     PluginManifest,
     PluginPolicy,
@@ -21,7 +25,7 @@ from .config import (
     save_plugin_policy,
     set_plugin_enabled,
 )
-from .manager import PluginManager
+from .manager import InvariantRun, PluginManager
 
 __all__ = [
     "PLUGIN_API_VERSION",
@@ -31,6 +35,11 @@ __all__ = [
     "DomainRepairInstruction",
     "DomainStrategy",
     "HarnessPlugin",
+    "Invariant",
+    "InvariantContext",
+    "InvariantFinding",
+    "InvariantResult",
+    "InvariantRun",
     "PluginContext",
     "PluginManager",
     "PluginManifest",

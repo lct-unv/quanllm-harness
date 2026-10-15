@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from quanllm_harness.config import HarnessSettings
 from quanllm_harness.contracts import HarnessEvent, ModelResponse
 from quanllm_harness.official_plugins.qm_teaching import (
@@ -269,6 +271,45 @@ def test_subprocess_tool_enforces_timeout_and_streaming_output_limit():
     assert "0.05" in timed_out.error
     assert overflowed.ok is False
     assert "字节上限" in overflowed.error
+
+
+def test_subprocess_tool_retry_policy_is_validated_and_propagated():
+    script = Path(__file__).parents[1] / "fixtures" / "plugin_subprocess.py"
+    invalid = SubprocessToolSpec(
+        name="bounded.run",
+        description="bounded",
+        parameters={"type": "object", "additionalProperties": True},
+        command=(sys.executable, str(script)),
+        retry_attempts=0,
+    )
+    with pytest.raises(ValueError):
+        invalid.validate()
+
+    class RetryingPlugin:
+        manifest = PluginManifest(
+            "retrying",
+            "1",
+            permissions=("tools.register",),
+            execution_mode="subprocess",
+        )
+        subprocess_tools = (
+            SubprocessToolSpec(
+                name="retrying.run",
+                description="bounded",
+                parameters={"type": "object", "additionalProperties": True},
+                command=(sys.executable, str(script)),
+                retry_attempts=2,
+            ),
+        )
+
+    manager = PluginManager.discover(
+        _policy("retrying"),
+        include_legacy_tools=False,
+        entry_points_function=_entrypoints(RetryingPlugin()),
+    )
+    registry = manager.build_tool_registry(include_builtin=False)
+    assert registry.capabilities()["retrying.run"]["retry_attempts"] == 2
+    assert registry.tools["retrying.run"].retry_attempts == 2
 
 
 def test_verifier_and_provider_extensions_are_registered_but_cannot_mark_verified():

@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^\d+\.\d+\.\d+$')]
-    [string]$HarnessVersion = '0.1.5',
+    [string]$HarnessVersion = '0.1.6',
 
     [string]$HarnessSource = '',
 

@@ -12,6 +12,29 @@ from ..contracts import EventSink, Evidence, HarnessEvent
 ToolHandler = Callable[[Mapping[str, Any]], Any]
 ArgumentValidator = Callable[[Mapping[str, Any]], None]
 
+# Structured evidence must stay JSON-portable so it can be embedded verbatim in
+# every protocol payload, run record and plugin result.
+_JSON_LEAF = (bool, int, float, str)
+_MAX_EVIDENCE_DEPTH = 12
+
+
+def _validate_evidence_payload(value: Any, depth: int = 0) -> None:
+    if depth > _MAX_EVIDENCE_DEPTH:
+        raise ValueError("工具结果嵌套层级过深")
+    if value is None or isinstance(value, _JSON_LEAF):
+        return
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            _validate_evidence_payload(item, depth + 1)
+        return
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError("工具结果对象的键必须是字符串")
+            _validate_evidence_payload(item, depth + 1)
+        return
+    raise ValueError(f"工具结果包含不可序列化的类型：{type(value).__name__}")
+
 
 @dataclass(frozen=True)
 class Tool:
@@ -23,6 +46,11 @@ class Tool:
     claim_kinds: Sequence[str] = ()
     argument_validator: ArgumentValidator | None = None
     planner_visible: bool = True
+    # Issue 004 - reliability layer. A handler failure is retried up to
+    # ``retry_attempts`` times; if every attempt fails and ``fallback`` is set,
+    # the fallback handler runs and its evidence records that it was used.
+    retry_attempts: int = 1
+    fallback: ToolHandler | None = None
     plugin_name: str = ""
     plugin_version: str = ""
     plugin_digest: str = ""
@@ -49,6 +77,10 @@ class ToolRegistry:
     def register(self, tool: Tool) -> None:
         if tool.name in self.tools:
             raise ValueError(f"工具重复注册：{tool.name}")
+        if tool.retry_attempts < 1:
+            raise ValueError(f"工具 {tool.name} 的 retry_attempts 必须为正整数")
+        if tool.fallback is not None and not callable(tool.fallback):
+            raise TypeError(f"工具 {tool.name} 的 fallback 必须可调用")
         self.tools[tool.name] = tool
 
     def register_many(self, tools: Sequence[Tool]) -> None:
@@ -81,6 +113,8 @@ class ToolRegistry:
                 "claim_kinds": list(tool.claim_kinds),
                 "limitations": list(tool.limitations),
                 "planner_visible": tool.planner_visible,
+                "retry_attempts": tool.retry_attempts,
+                "has_fallback": tool.fallback is not None,
                 "plugin_name": tool.plugin_name,
                 "plugin_version": tool.plugin_version,
                 "plugin_digest": tool.plugin_digest,
@@ -124,19 +158,27 @@ class ToolRegistry:
         reason: str,
         *,
         event_sink: EventSink | None = None,
+        error_kind: str = "review",
     ) -> Evidence:
         with self._lock:
             self._evidence_counter += 1
             evidence_id = f"E-{self._evidence_counter:04d}"
+        prefix = (
+            "工具调用前 Schema 预校验未通过"
+            if error_kind == "schema"
+            else "工具调用前语义审查未通过"
+        )
         evidence = Evidence(
             id=evidence_id,
             tool=name,
             operation=str(arguments.get("operation", name)),
             arguments=dict(arguments),
             ok=False,
-            error=f"工具调用前语义审查未通过：{reason}",
+            error=f"{prefix}：{reason}",
             input_verified=False,
             review=reason,
+            error_kind=error_kind,
+            attempts=0 if error_kind == "schema" else 1,
         )
         if event_sink:
             event_sink(
@@ -182,38 +224,11 @@ class ToolRegistry:
                 arguments=dict(arguments),
                 ok=False,
                 error="未知工具",
+                error_kind="unknown",
+                attempts=0,
             )
         else:
-            try:
-                self.validate_call(name, arguments)
-                result = tool.handler(arguments)
-                evidence = Evidence(
-                    id=evidence_id,
-                    tool=name,
-                    operation=str(arguments.get("operation", name)),
-                    arguments=dict(arguments),
-                    ok=True,
-                    result=result,
-                    limitations=tuple(tool.limitations),
-                    plugin_name=tool.plugin_name,
-                    plugin_version=tool.plugin_version,
-                    plugin_digest=tool.plugin_digest,
-                    execution_mode=tool.execution_mode,
-                )
-            except Exception as exc:
-                evidence = Evidence(
-                    id=evidence_id,
-                    tool=name,
-                    operation=str(arguments.get("operation", name)),
-                    arguments=dict(arguments),
-                    ok=False,
-                    error=f"{type(exc).__name__}: {exc}",
-                    limitations=tuple(tool.limitations),
-                    plugin_name=tool.plugin_name,
-                    plugin_version=tool.plugin_version,
-                    plugin_digest=tool.plugin_digest,
-                    execution_mode=tool.execution_mode,
-                )
+            evidence = self._run_tool(tool, dict(arguments), evidence_id, event_sink)
         if event_sink:
             event_sink(
                 HarnessEvent(
@@ -225,6 +240,125 @@ class ToolRegistry:
         with self._lock:
             self._cache[signature] = evidence
         return evidence
+
+    def _run_tool(
+        self,
+        tool: Tool,
+        arguments: dict[str, Any],
+        evidence_id: str,
+        event_sink: EventSink | None,
+    ) -> Evidence:
+        """Pre-validate, run with a bounded retry policy, then fall back."""
+
+        def build(
+            ok: bool,
+            *,
+            result: Any = None,
+            error: str = "",
+            error_kind: str = "",
+            attempts: int = 1,
+            fallback_used: bool = False,
+            limitations: tuple[str, ...] | None = None,
+        ) -> Evidence:
+            return Evidence(
+                id=evidence_id,
+                tool=tool.name,
+                operation=str(arguments.get("operation", tool.name)),
+                arguments=dict(arguments),
+                ok=ok,
+                result=result,
+                error=error,
+                limitations=tuple(tool.limitations if limitations is None else limitations),
+                plugin_name=tool.plugin_name,
+                plugin_version=tool.plugin_version,
+                plugin_digest=tool.plugin_digest,
+                execution_mode=tool.execution_mode,
+                error_kind=error_kind,
+                attempts=attempts,
+                fallback_used=fallback_used,
+            )
+
+        try:
+            self.validate_call(tool.name, arguments)
+        except Exception as exc:
+            return build(
+                False,
+                error=f"Schema 预校验失败：{type(exc).__name__}: {exc}",
+                error_kind="schema",
+                attempts=0,
+            )
+
+        attempts = 0
+        last_error = ""
+        last_kind = "handler"
+        for attempt in range(1, tool.retry_attempts + 1):
+            attempts = attempt
+            try:
+                result = tool.handler(arguments)
+            except Exception as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+                last_kind = "handler"
+            else:
+                try:
+                    _validate_evidence_payload(result)
+                except ValueError as exc:
+                    last_error = f"证据校验失败：{exc}"
+                    last_kind = "evidence"
+                else:
+                    return build(True, result=result, attempts=attempts)
+            if attempt < tool.retry_attempts and event_sink:
+                event_sink(
+                    HarnessEvent(
+                        "tool_retried",
+                        tool.name,
+                        {
+                            "evidence_id": evidence_id,
+                            "attempt": attempt,
+                            "next_attempt": attempt + 1,
+                            "error": last_error,
+                        },
+                    )
+                )
+
+        if tool.fallback is None:
+            return build(False, error=last_error, error_kind=last_kind, attempts=attempts)
+
+        try:
+            fallback_result = tool.fallback(arguments)
+        except Exception as exc:
+            return build(
+                False,
+                error=f"{last_error}；回退实现同样失败：{type(exc).__name__}: {exc}",
+                error_kind=last_kind,
+                attempts=attempts,
+                limitations=(*tool.limitations, "回退实现失败"),
+            )
+        try:
+            _validate_evidence_payload(fallback_result)
+        except ValueError as exc:
+            return build(
+                False,
+                error=f"回退实现证据校验失败：{exc}",
+                error_kind="evidence",
+                attempts=attempts,
+                limitations=(*tool.limitations, "回退实现失败"),
+            )
+        if event_sink:
+            event_sink(
+                HarnessEvent(
+                    "tool_fallback_used",
+                    tool.name,
+                    {"evidence_id": evidence_id, "error": last_error},
+                )
+            )
+        return build(
+            True,
+            result=fallback_result,
+            error=last_error,
+            attempts=attempts,
+            fallback_used=True,
+            limitations=(*tool.limitations, "首次实现失败，已使用回退实现"),
+        )
 
 
 def default_tool_registry(*, include_plugins: bool = True) -> ToolRegistry:

@@ -25,6 +25,15 @@ class Evidence:
     plugin_version: str = ""
     plugin_digest: str = ""
     execution_mode: str = "builtin"
+    # Content address of the candidate this evidence was collected for. Empty
+    # means the evidence was produced outside per-candidate verification (for
+    # example during solving) and is therefore candidate-independent.
+    candidate_digest: str = ""
+    # Issue 004 - tool reliability telemetry. ``error_kind`` is empty on
+    # success and otherwise one of: schema, handler, evidence, review, unknown.
+    error_kind: str = ""
+    attempts: int = 1
+    fallback_used: bool = False
 
 
 @dataclass(frozen=True)

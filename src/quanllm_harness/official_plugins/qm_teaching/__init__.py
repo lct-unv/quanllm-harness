@@ -11,6 +11,12 @@ from ...plugins import (
     PluginVerificationContext,
     PluginVerificationResult,
 )
+from ...verification import (
+    hermitian_invariant,
+    measurement_invariant,
+    projection_invariant,
+    unitary_invariant,
+)
 from .deterministic import (
     apply_deterministic_corrections,
     deterministic_candidate_issues,
@@ -82,6 +88,7 @@ class QuantumMechanicsTeachingPlugin:
         description="Official quantum-mechanics teaching verification and recovery profile",
         permissions=(
             "domains.register",
+            "invariants.register",
             "prompts.contribute",
             "tools.register",
             "verifiers.register",
@@ -93,6 +100,11 @@ class QuantumMechanicsTeachingPlugin:
 
     def setup(self, context) -> None:
         context.domains.register("teaching", self.strategy)
+        # Reusable domain invariants attached to every verification pass.
+        context.invariants.register("projection", projection_invariant())
+        context.invariants.register("unitary", unitary_invariant())
+        context.invariants.register("hermitian", hermitian_invariant())
+        context.invariants.register("measurement", measurement_invariant())
         context.prompts.register("teaching", contribute_prompt)
         for tool in (*qm_teaching_sympy_tools(), *operator_tools(), *quantum_tools()):
             context.tools.register(replace(tool, name=f"quanllm-qm-teaching.{tool.name}"))

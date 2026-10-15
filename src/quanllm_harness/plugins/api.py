@@ -17,6 +17,7 @@ PLUGIN_API_VERSION = "1"
 SAFE_PLUGIN_PERMISSIONS = (
     "domains.register",
     "events.subscribe",
+    "invariants.register",
     "prompts.contribute",
     "services.consume",
     "services.provide",
@@ -92,10 +93,13 @@ class SubprocessToolSpec:
     claim_kinds: Sequence[str] = ()
     planner_visible: bool = True
     timeout_seconds: float | None = None
+    retry_attempts: int = 1
 
     def validate(self) -> None:
         if not self.name or not self.command:
             raise ValueError("子进程工具必须声明 name 和 command")
+        if self.retry_attempts < 1:
+            raise ValueError("子进程工具 retry_attempts 必须为正整数")
         if not isinstance(self.parameters, Mapping):
             raise TypeError("子进程工具 parameters 必须是 JSON Schema 对象")
         if self.timeout_seconds is not None and self.timeout_seconds <= 0:
@@ -116,6 +120,35 @@ class PluginVerificationResult:
     issues: Sequence[Issue] = ()
     warnings: Sequence[str] = ()
     summary: str = ""
+
+
+@dataclass(frozen=True)
+class InvariantContext:
+    """Everything a domain invariant may inspect; all fields are read-only."""
+
+    question: str
+    candidate: str
+    claims: Sequence[Claim]
+    requirements: Sequence[Requirement]
+    evidence: Sequence[Evidence]
+
+
+@dataclass(frozen=True)
+class InvariantResult:
+    """One invariant's deterministic verdict for the current candidate."""
+
+    checked: int = 0
+    issues: Sequence[Issue] = ()
+    notes: Sequence[str] = ()
+
+
+@dataclass(frozen=True)
+class InvariantFinding:
+    plugin: str
+    invariant: str
+    checked: int = 0
+    issues: Sequence[Issue] = ()
+    notes: Sequence[str] = ()
 
 
 @dataclass(frozen=True)
@@ -167,6 +200,7 @@ class DomainStrategy(Protocol):
 
 
 PluginVerifier = Callable[[PluginVerificationContext], PluginVerificationResult]
+Invariant = Callable[[InvariantContext], InvariantResult]
 ProviderFactory = Callable[["HarnessSettings"], "QuanLLMProvider"]
 EventSubscriber = Callable[[HarnessEvent], None]
 PromptContributor = Callable[[str, str], str]
@@ -199,6 +233,10 @@ class _DomainRegistrar(Protocol):
     def register(self, name: str, strategy: DomainStrategy) -> None: ...
 
 
+class _InvariantRegistrar(Protocol):
+    def register(self, name: str, invariant: Invariant) -> None: ...
+
+
 class _PromptRegistrar(Protocol):
     def register(self, name: str, contributor: PromptContributor) -> None: ...
 
@@ -218,6 +256,7 @@ class PluginContext:
     verifiers: _VerifierRegistrar
     providers: _ProviderRegistrar
     domains: _DomainRegistrar
+    invariants: _InvariantRegistrar
     prompts: _PromptRegistrar
     services: _ServiceRegistrar
 
@@ -237,6 +276,7 @@ class PluginStatus:
     verifiers: Sequence[str] = ()
     providers: Sequence[str] = ()
     domains: Sequence[str] = ()
+    invariants: Sequence[str] = ()
     prompts: Sequence[str] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -254,5 +294,6 @@ class PluginStatus:
             "verifiers": list(self.verifiers),
             "providers": list(self.providers),
             "domains": list(self.domains),
+            "invariants": list(self.invariants),
             "prompts": list(self.prompts),
         }

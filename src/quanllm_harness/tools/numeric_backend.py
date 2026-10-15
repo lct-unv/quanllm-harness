@@ -29,14 +29,53 @@ def _context(args: Mapping[str, Any]):
     return mp, expression, function
 
 
-def numeric_integrate(args: Mapping[str, Any]) -> Any:
-    mp, expression, function = _context(args)
+def _bounds(mp, args: Mapping[str, Any]):
     lower = mp.mpf(str(args["lower"])) if str(args["lower"]) not in {"-inf", "-oo"} else -mp.inf
     upper = (
         mp.mpf(str(args["upper"])) if str(args["upper"]) not in {"inf", "+inf", "oo"} else mp.inf
     )
+    return lower, upper
+
+
+def numeric_integrate(args: Mapping[str, Any]) -> Any:
+    mp, expression, function = _context(args)
+    lower, upper = _bounds(mp, args)
     result = mp.quad(function, [lower, upper])
     return {"expression": str(expression), "value": mp.nstr(result, mp.mp.dps), "dps": mp.mp.dps}
+
+
+def numeric_integrate_fallback(args: Mapping[str, Any]) -> Any:
+    """Bounded alternate quadrature used when the default method fails.
+
+    Finite intervals are subdivided and integrated with Gauss-Legendre, which
+    converges where the default tanh-sinh rule reports failure (for example on
+    interior discontinuities or endpoint singularities). Infinite intervals are
+    retried with tanh-sinh at a higher working precision. Both strategies are
+    bounded: they never hand the integrand to an unbounded symbolic engine.
+    """
+
+    mp, expression, function = _context(args)
+    lower, upper = _bounds(mp, args)
+    if mp.isfinite(lower) and mp.isfinite(upper) and lower != upper:
+        segments = 8
+        step = (upper - lower) / segments
+        points = [lower + step * index for index in range(segments + 1)]
+        total = mp.mpf(0)
+        for index in range(segments):
+            total += mp.quadgl(function, [points[index], points[index + 1]])
+        result = total
+        method = "gauss-legendre-subdivided"
+    else:
+        with mp.workdps(mp.mp.dps + 20):
+            result = mp.quad(function, [lower, upper])
+        result = mp.mpf(mp.nstr(result, mp.mp.dps))
+        method = "tanh-sinh-higher-precision"
+    return {
+        "expression": str(expression),
+        "value": mp.nstr(result, mp.mp.dps),
+        "dps": mp.mp.dps,
+        "method": method,
+    }
 
 
 def numeric_root(args: Mapping[str, Any]) -> Any:
@@ -98,6 +137,7 @@ def numeric_tools() -> tuple[Tool, ...]:
             numeric_integrate,
             limitations=("数值积分不是解析证明；奇点附近需结合误差和分段检查",),
             claim_kinds=kinds,
+            fallback=numeric_integrate_fallback,
         ),
         Tool(
             "numeric_root",

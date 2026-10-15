@@ -18,6 +18,8 @@ OS 级沙箱。因此只应启用已审查的进程内插件。
 - 可开启 `require_trusted_digest`，在导入前对已安装发行内容计算 SHA-256。
 - Provider 需要 `providers.register` 和 `secrets.api_key` 双重权限，且默认不授权。
 - Verifier 没有“验证通过”接口；最终状态只由核心引擎决定。
+- Invariant 由主机执行、只能读取 `InvariantContext` 并返回 `Issue` 列表；
+  不变量失败记为基础设施问题，不会静默通过，也没有授予 `verified` 的接口。
 - Tool Evidence 携带插件名、版本、发行摘要和执行模式，便于审计。
 - Event、Verifier、请求钩子与关闭回调异常不会让核心服务崩溃。
 

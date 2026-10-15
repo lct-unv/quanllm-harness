@@ -8,18 +8,23 @@ from .execution_graph import (
     RunController,
     RunDeadlineExceeded,
 )
+from .lifecycle import Admission, CandidateLedger
 from .orchestrator import QuanLLMHarness
+from .recovery import RecoveryTracker
 
 __all__ = [
+    "Admission",
     "CancellationToken",
+    "CandidateLedger",
     "ConvergenceAction",
     "ConvergenceDecision",
     "ConvergencePolicy",
     "DEFAULT_EXECUTION_GRAPH",
     "ExecutionGraph",
     "GraphNode",
+    "QuanLLMHarness",
+    "RecoveryTracker",
     "RunCancelled",
     "RunController",
-    "QuanLLMHarness",
     "RunDeadlineExceeded",
 ]

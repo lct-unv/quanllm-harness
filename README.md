@@ -1,8 +1,8 @@
 # QuanLLM Harness
 
 [![CI](https://github.com/lct-unv/quanllm-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/lct-unv/quanllm-harness/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/pypi/pyversions/quanllm-harness.svg?release=0.1.5)](https://pypi.org/project/quanllm-harness/)
-[![PyPI](https://img.shields.io/badge/PyPI-v0.1.5-3775A9.svg)](https://pypi.org/project/quanllm-harness/)
+[![Python](https://img.shields.io/pypi/pyversions/quanllm-harness.svg?release=0.1.6)](https://pypi.org/project/quanllm-harness/)
+[![PyPI](https://img.shields.io/badge/PyPI-v0.1.6-3775A9.svg)](https://pypi.org/project/quanllm-harness/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 [中文](#中文) | [English](#english)
@@ -27,7 +27,10 @@
 - 推理请求开启 thinking、禁用 JSON mode；结构化请求关闭 thinking、启用 JSON mode。
 - 简单题走单求解器，复杂题使用两个上下文隔离的独立求解器。
 - 每次工具调用执行前都经过一次语义忠实性审查；工具运行成功不自动等于断言已获支持。
-- 工具证据优先于模型意见；修订稿必须重新提取断言并重新核验。
+- 工具证据优先于模型意见；修订稿必须重新提取断言并重新核验；证据按候选摘要隔离，上一轮的反证不会串到本轮。
+- 候选具有显式生命周期：只有未发现模型问题、达到 `verified` 的候选可以进入终稿；被判定失效的候选按内容摘要封存，修复稿无法把它复活，被拒绝的回写会计入失效状态泄漏计数。
+- 工具反证会产生由 Python 生成的最早错误定位：断言按候选顺序线性化，最早与工具证据矛盾的断言就是回滚目标，其下游断言一并重算，禁止在下游做补偿性修改。
+- 每次运行都记录恢复指标：检测方式与延迟、定位断言与来源、回滚距离、修复轮数、恢复 Token 开销、失效状态泄漏与恢复是否成功；一次通过的答案不计为恢复成功。
 - 候选综合不得降低已验证状态：综合失败时回退到可交付的 Solver 候选，综合稿违反更多确定性不变量时禁止替换来源候选。
 - 只有模型产生的问题清零才标记为 `verified`；求解、基础设施或全部语义核验失败时标记为 `degraded_delivery`，已有其他语义核验通过时的可选检查点失败只记录告警。
 - 用户文本始终作为待处理数据传递给内部 Agent，不能覆盖内部协议。
@@ -93,7 +96,7 @@ quanllm-harness <<'EOF'
 EOF
 ```
 
-`--json` 输出完整机器可读结果；`--run-dir DIR` 原子化保存运行记录；`--capabilities` 不联网列出工具；`--graph` 输出默认执行图；`--total-timeout` 设置整次运行的协作式墙钟预算。
+`--json` 输出完整机器可读结果（含 `lifecycle` 候选状态机与 `recovery` 恢复指标）；`--run-dir DIR` 原子化保存运行记录；`--capabilities` 不联网列出工具；`--graph` 输出默认执行图；`--total-timeout` 设置整次运行的协作式墙钟预算。
 
 会话 CLI：
 
@@ -282,7 +285,17 @@ registry, event stream, and evidence space.
 - Route simple questions to one solver and complex questions to two context-isolated solvers.
 - Review domain fit and argument fidelity once before every tool call; successful execution alone
   does not mean that a claim is supported.
-- Prefer tool evidence over model opinion; extract and verify all claims again after every repair.
+- Prefer tool evidence over model opinion; extract and verify all claims again after every repair,
+  and scope every piece of evidence to the candidate digest it was collected for.
+- Keep candidates on an explicit lifecycle: only a candidate with no model-origin issue reaches
+  `verified` and final delivery, invalidated text is tombstoned by digest and cannot be resurrected
+  by a later repair, and rejected write-backs are counted as invalid-state leakage.
+- Let Python, not a model, localize the first contradiction: claims are linearized in candidate
+  order, the earliest contradicted assertion becomes the rollback target, and its downstream
+  assertions must be recomputed instead of patched.
+- Report recovery metrics for every run: detection kind and latency, localized assertion and source,
+  rollback distance, repair rounds, recovery token cost, invalid-state leakage, and recovery
+  success. A first-pass answer is not a recovery because no recovery path was exercised.
 - Keep synthesis monotonic under deterministic checks: fall back to a deliverable Solver candidate
   when synthesis fails, and reject a synthesis that violates stronger invariants than a source.
 - Return `verified` only after all model-generated issues are cleared. Solver, infrastructure, or

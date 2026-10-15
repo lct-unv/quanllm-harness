@@ -19,10 +19,15 @@ from .api import (
     DomainRepairInstruction,
     DomainStrategy,
     EventSubscriber,
+    Invariant,
+    InvariantContext,
+    InvariantFinding,
+    InvariantResult,
     PluginContext,
     PluginManifest,
     PluginPolicy,
     PluginStatus,
+    PluginVerificationContext,
     PluginVerifier,
     PromptContributor,
     ProviderFactory,
@@ -41,6 +46,18 @@ _BUNDLED_PLUGIN_ENTRY_POINTS = (
 )
 
 
+@dataclass(frozen=True)
+class InvariantRun:
+    """Aggregate result of every registered domain invariant for one pass."""
+
+    findings: Sequence[InvariantFinding] = ()
+    failures: Sequence[str] = ()
+
+    @property
+    def issues(self) -> tuple[Issue, ...]:
+        return tuple(issue for finding in self.findings for issue in finding.issues)
+
+
 @dataclass
 class _LoadedPlugin:
     entrypoint: EntryPoint
@@ -52,6 +69,7 @@ class _LoadedPlugin:
     verifier_names: list[str] = field(default_factory=list)
     provider_names: list[str] = field(default_factory=list)
     domain_names: list[str] = field(default_factory=list)
+    invariant_names: list[str] = field(default_factory=list)
     prompt_names: list[str] = field(default_factory=list)
 
 
@@ -145,6 +163,18 @@ class _DomainRegistrar(_PermissionedRegistrar):
         self.plugin.domain_names.append(full_name)
 
 
+class _InvariantRegistrar(_PermissionedRegistrar):
+    def register(self, name: str, invariant: Invariant) -> None:
+        self.require()
+        full_name = self.manager._namespaced(self.plugin.manifest.name, name)
+        if not callable(invariant):
+            raise TypeError("插件不变量必须可调用")
+        if any(existing == full_name for existing, _, _ in self.manager._invariants):
+            raise ValueError(f"插件不变量重复注册：{full_name}")
+        self.manager._invariants.append((full_name, self.plugin.manifest.name, invariant))
+        self.plugin.invariant_names.append(full_name)
+
+
 class _PromptRegistrar(_PermissionedRegistrar):
     def register(self, name: str, contributor: PromptContributor) -> None:
         self.require()
@@ -204,6 +234,7 @@ class PluginManager:
         self._verifiers: list[tuple[str, str, PluginVerifier]] = []
         self._providers: dict[str, tuple[str, ProviderFactory]] = {}
         self._domains: list[tuple[str, str, DomainStrategy]] = []
+        self._invariants: list[tuple[str, str, Invariant]] = []
         self._prompt_contributors: list[tuple[str, str, PromptContributor]] = []
         self._services: dict[str, Any] = {}
         self._diagnostics: list[str] = []
@@ -275,7 +306,7 @@ class PluginManager:
         try:
             return Version(version("quanllm-harness"))
         except Exception:
-            return Version("0.1.5")
+            return Version("0.1.6")
 
     def _enabled(self, name: str) -> tuple[bool, str]:
         if name in self.policy.disabled:
@@ -408,6 +439,7 @@ class PluginManager:
             verifiers=_VerifierRegistrar(self, plugin, "verifiers.register"),
             providers=_ProviderRegistrar(self, plugin, "providers.register"),
             domains=_DomainRegistrar(self, plugin, "domains.register"),
+            invariants=_InvariantRegistrar(self, plugin, "invariants.register"),
             prompts=_PromptRegistrar(self, plugin, "prompts.contribute"),
             services=_ServiceRegistrar(self, plugin, "services.provide"),
         )
@@ -447,6 +479,10 @@ class PluginManager:
                 plugin_version=plugin.manifest.version,
                 plugin_digest=plugin.digest,
                 execution_mode="subprocess",
+                # Subprocess tools opt in to a retry policy through their spec;
+                # plugin tools are pure functions of their arguments, so a
+                # bounded retry is safe when a plugin declares one.
+                retry_attempts=spec.retry_attempts,
             )
             if not tool.name.startswith(plugin.manifest.name + "."):
                 raise ValueError(f"子进程工具必须使用 {plugin.manifest.name}. 前缀：{tool.name}")
@@ -491,6 +527,7 @@ class PluginManager:
                     verifiers=tuple(plugin.verifier_names),
                     providers=tuple(plugin.provider_names),
                     domains=tuple(plugin.domain_names),
+                    invariants=tuple(plugin.invariant_names),
                     prompts=tuple(plugin.prompt_names),
                 )
             except Exception as exc:
@@ -571,6 +608,7 @@ class PluginManager:
             name: value for name, value in self._providers.items() if value[0] != plugin_name
         }
         self._domains = [item for item in self._domains if item[1] != plugin_name]
+        self._invariants = [item for item in self._invariants if item[1] != plugin_name]
         self._prompt_contributors = [
             item for item in self._prompt_contributors if item[1] != plugin_name
         ]
@@ -592,6 +630,50 @@ class PluginManager:
     @property
     def verifiers(self) -> Sequence[tuple[str, str, PluginVerifier]]:
         return tuple(self._verifiers)
+
+    @property
+    def invariants(self) -> Sequence[tuple[str, str, Invariant]]:
+        return tuple(self._invariants)
+
+    def run_invariants(self, context: PluginVerificationContext) -> InvariantRun:
+        """Run every registered domain invariant deterministically.
+
+        Invariants are domain-owned and host-executed: they may not call models,
+        they must return an explicit checked count, and a failing invariant is
+        reported as an infrastructure failure instead of silently passing.
+        """
+
+        findings: list[InvariantFinding] = []
+        failures: list[str] = []
+        for full_name, plugin_name, invariant in tuple(self._invariants):
+            invariant_context = InvariantContext(
+                question=context.question,
+                candidate=context.candidate,
+                claims=tuple(context.claims),
+                requirements=tuple(context.requirements),
+                evidence=tuple(context.evidence),
+            )
+            try:
+                result = invariant(invariant_context)
+                if not isinstance(result, InvariantResult):
+                    raise TypeError("不变量必须返回 InvariantResult")
+                if any(not isinstance(item, Issue) for item in result.issues):
+                    raise TypeError("不变量 issues 只能包含 Issue")
+                findings.append(
+                    InvariantFinding(
+                        plugin=plugin_name,
+                        invariant=full_name,
+                        checked=result.checked,
+                        issues=tuple(result.issues),
+                        notes=tuple(result.notes),
+                    )
+                )
+            except Exception as exc:
+                message = f"不变量 {full_name} 执行失败：{type(exc).__name__}: {exc}"
+                with self._lock:
+                    self._diagnostics.append(message)
+                failures.append(message)
+        return InvariantRun(tuple(findings), tuple(failures))
 
     def _matching_domains(self, question: str) -> tuple[tuple[str, str, DomainStrategy], ...]:
         matched: list[tuple[str, str, DomainStrategy]] = []

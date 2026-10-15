@@ -7,7 +7,7 @@ from typing import Any
 
 from ..agents import ToolCallReviewerAgent, prompts
 from ..agents.runtime import AgentRuntime
-from ..contracts import Claim, Evidence, HarnessEvent
+from ..contracts import Claim, Evidence, HarnessEvent, answer_digest
 from ..protocols import StructuredResponseError
 
 
@@ -23,6 +23,7 @@ class MathematicalVerifier:
     ) -> tuple[list[Evidence], list[str], set[str]]:
         schemas = self.runtime.tools.schemas()
         claims_by_id = {claim.id: claim for claim in claims}
+        digest = answer_digest(candidate)
         not_checkable_ids: set[str] = set()
 
         def validate(data: dict[str, Any]):
@@ -88,6 +89,16 @@ class MathematicalVerifier:
         for claim_id, tool_name, arguments, purpose in plans:
             claim = claims_by_id[claim_id]
             try:
+                self.runtime.tools.validate_call(tool_name, arguments, claim_kind=claim.kind)
+            except Exception as exc:
+                warning = f"{claim_id} 工具调用未通过 Schema 预校验：{type(exc).__name__}: {exc}"
+                warnings.append(warning)
+                if self.runtime.event_sink:
+                    self.runtime.event_sink(
+                        HarnessEvent("tool_precheck_rejected", tool_name, {"reason": warning})
+                    )
+                continue
+            try:
                 review = reviewer.review(
                     question=question,
                     candidate=candidate,
@@ -131,6 +142,7 @@ class MathematicalVerifier:
                 input_verified=True,
                 supports_claim=support,
                 review=review.reason + "；来源：" + " | ".join(review.source_anchors),
+                candidate_digest=digest,
             )
             evidence.append(item)
             self.runtime.upsert_evidence(item)

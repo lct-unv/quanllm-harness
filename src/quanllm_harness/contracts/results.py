@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass
 from enum import Enum
 from typing import Any, cast
 
+from .assertions import AssertionTimeline
 from .claims import Claim, Requirement
 from .common import IssueOrigin, RunStatus, Usage
 from .events import HarnessEvent
 from .evidence import Evidence, Issue
+from .lifecycle import CandidateLifecycle
+from .recovery import RecoveryMetrics
 from .requests import RequestPolicy
 
 
@@ -20,6 +23,7 @@ class VerificationReport:
     issues: Sequence[Issue] = ()
     protocol_warnings: Sequence[str] = ()
     verifier_summaries: Sequence[str] = ()
+    assertion_timeline: AssertionTimeline = field(default_factory=AssertionTimeline)
 
     @property
     def model_issues(self) -> list[Issue]:
@@ -45,6 +49,8 @@ class HarnessResult:
     repair_rounds: int = 0
     run_id: str = ""
     record_path: str = ""
+    lifecycle: CandidateLifecycle = field(default_factory=CandidateLifecycle)
+    recovery: RecoveryMetrics = field(default_factory=RecoveryMetrics)
 
     def to_dict(self, *, include_events: bool = True) -> dict[str, Any]:
         def convert(value: Any) -> Any:

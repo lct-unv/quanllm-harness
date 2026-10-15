@@ -220,6 +220,33 @@ class AgentRuntime:
                 from .tool_call_reviewer import ToolCallReviewerAgent
 
                 tool_attempted = True
+                # Issue 004: reject structurally invalid calls before spending a
+                # model request on the semantic reviewer. Such calls can never be
+                # executed, so this only removes wasted work and adds telemetry.
+                try:
+                    self.tools.validate_call(call.name, call.arguments)
+                except Exception as exc:
+                    evidence = self.tools.rejected_evidence(
+                        call.name,
+                        call.arguments,
+                        f"{type(exc).__name__}: {exc}",
+                        event_sink=self.event_sink,
+                        error_kind="schema",
+                    )
+                    self.upsert_evidence(evidence)
+                    failed_tools[call.name] = failed_tools.get(call.name, 0) + 1
+                    if failed_tools[call.name] >= self.settings.max_tool_failures_per_name:
+                        blocked_tools.add(call.name)
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": call.id,
+                            "content": json.dumps(
+                                evidence.__dict__, ensure_ascii=False, default=list
+                            ),
+                        }
+                    )
+                    continue
                 try:
                     review = ToolCallReviewerAgent(self).review(
                         question=user,

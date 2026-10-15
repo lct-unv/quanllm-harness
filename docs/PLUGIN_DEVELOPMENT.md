@@ -56,8 +56,8 @@ entry-point 名必须与 `manifest.name` 相同。Tool 名必须以
 - `execution_mode`: `in_process` 或 `subprocess`。
 
 当前权限为 `tools.register`、`verifiers.register`、`events.subscribe`、
-`domains.register`、`prompts.contribute`、`services.provide`、`services.consume`、`providers.register` 和
-`secrets.api_key`。
+`domains.register`、`invariants.register`、`prompts.contribute`、`services.provide`、
+`services.consume`、`providers.register` 和 `secrets.api_key`。
 Provider 必须同时声明后两项；高权限不在默认主机允许列表中。
 
 ## 扩展点
@@ -67,6 +67,11 @@ Provider 必须同时声明后两项；高权限不在默认主机允许列表�
   `Issue`/警告/摘要，不能授予 `verified`。
 - `context.providers.register(name, factory)`: 返回 `QuanLLMProvider`，并通过
   `QUANLLM_PLUGIN_PROVIDER=<plugin>.<provider>` 选择。
+- `context.invariants.register(name, invariant)`: 注册确定性领域不变量。不变量接收
+  `InvariantContext`（问题、候选、断言、要求、证据），返回 `InvariantResult(checked, issues, notes)`；
+  主机在每轮核验中执行它，失败会作为基础设施问题记录而不是静默通过。核心自带可复用的
+  `projection_invariant`、`unitary_invariant`、`hermitian_invariant` 与 `measurement_invariant`，
+  它们只校验经过审查的工具调用所声明的矩阵或概率向量，不会把中间结果当成待测对象。
 - `context.domains.register(name, strategy)`: 注册领域策略，提供候选门禁、降级答案、
   受限修复指令和交付前终结。核心仍唯一拥有修复预算、状态转换和最终状态裁决权。
 - `context.prompts.register(name, callback)`: 按阶段贡献领域 system prompt 片段；核心提示词保持领域无关。
@@ -86,7 +91,8 @@ Provider 必须同时声明后两项；高权限不在默认主机允许列表�
 ```
 
 成功响应为 `{"protocol":1,"ok":true,"result":...}`，失败响应为
-`{"protocol":1,"ok":false,"error":"..."}`。完整示例见 `examples/plugin_example.py` 和
+`{"protocol":1,"ok":false,"error":"..."}`。`SubprocessToolSpec.retry_attempts` 默认为 1；
+只有确认调用幂等且失败通常是瞬时故障时才应调大，因为每次尝试都会重新计入超时预算。完整示例见 `examples/plugin_example.py` 和
 `tests/fixtures/plugin_subprocess.py`。
 
 ## 安装后管理
@@ -120,3 +126,22 @@ quanllm-harness plugins inspect quanllm-qm-teaching
 
 启用后，领域插件只能提供 `Issue`、修复指令和终结结果，不能绕过核心将运行标记为
 `verified`。不启用时，通用 Harness 不执行任何量子力学特异的确定性修复或标准结果回写。
+
+## 领域不变量示例
+
+```python
+from quanllm_harness.verification import unitary_invariant
+
+
+class ExamplePlugin:
+    manifest = PluginManifest(
+        name="example_plugin",
+        version="1.0.0",
+        permissions=("tools.register", "invariants.register"),
+    )
+
+    def setup(self, context):
+        context.invariants.register("unitary", unitary_invariant())
+```
+
+不变量必须完全确定：不得调用模型、不得访问网络，且必须返回实际检查的数量。

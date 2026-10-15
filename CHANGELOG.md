@@ -1,6 +1,43 @@
 # Changelog
 
-## Unreleased
+## 0.1.6 - 2026-10-15
+
+- Added explicit candidate lifecycle management. Every solver, synthesis, repair and domain-rewrite
+  candidate is registered in a `CandidateLedger` with `proposed`/`verified`/`invalid`/`archived`
+  states, an append-only transition history and content-addressed invalid tombstones, so a repair or
+  deterministic rewrite can no longer resurrect text that was already invalidated. Blocked
+  write-backs are counted and fall back to the most recent verified checkpoint.
+- Added deterministic earliest-error localization. Claims are linearized into an assertion timeline
+  in candidate order and tool evidence that contradicts a claim now produces a Python-authored
+  finding that names the earliest incorrect step and the downstream assertions that must be
+  recomputed. These findings are never adjudicated away.
+- Fixed a stale-evidence leak: evidence is now scoped to the candidate digest it was collected for.
+  Claim IDs are re-issued per candidate, so an earlier round's contradiction or support could
+  previously be matched against the repaired answer (the failure pattern behind recovery Case 10).
+- Added a domain invariant registry (`context.invariants.register`). Invariants are deterministic,
+  host-executed, permission-gated (`invariants.register`) and only validate matrices or probability
+  vectors that a reviewed tool call actually declared. The official `quanllm-qm-teaching` plugin now
+  registers reusable projection, unitary, Hermitian and measurement invariants.
+- Hardened the tool reliability layer: schema pre-validation now rejects structurally invalid calls
+  before spending a semantic-review request, handler failures are retried under a bounded per-tool
+  policy, an optional fallback handler is recorded in the evidence, and non-JSON results are
+  rejected as evidence failures. Subprocess tools can declare an explicit retry policy, and
+  `numeric_integrate` falls back to a bounded alternate quadrature strategy.
+- Made a missing or failed tool evidence checkpoint honestly delivery-degrading. A math claim without
+  successful tool evidence now yields an infrastructure issue instead of `verified`, matching the
+  documented contract that an unverified checkpoint cannot certify an answer. The answer text and
+  the verified reasoning state are left untouched.
+- Added `RecoveryMetrics` (detection kind/latency, localized claim and source, rollback distance,
+  repair iterations, verified rounds, recovery token cost, invalid-state leakage, recovery success)
+  to `HarnessResult`, `--json` output, run records and the CLI summary.
+- Added regression coverage for the candidate lifecycle, assertion timeline, evidence scoping,
+  domain invariants, tool retry/fallback/evidence validation, recovery metrics and both fixed
+  consistency defects.
+
+### Contributor
+
+- Hxttt1 <3034557373@qq.com>
+- [lct-unv](https://github.com/lct-unv)
 
 ## 0.1.5 - 2026-10-05
 
